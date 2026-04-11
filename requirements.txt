@@ -1,0 +1,16 @@
+fastapi[all]
+uvicorn
+pandas
+numpy
+matplotlib
+scikit-learn
+econml
+dowhy
+azure-storage-blob
+pydantic
+python-multipart
+pytest-asyncio
+pytest
+causalml
+pydantic-settings
+httpx

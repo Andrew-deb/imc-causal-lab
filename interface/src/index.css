@@ -1,0 +1,186 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 220 70% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 220 25% 10%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 20% 93%;
+    --accent-foreground: 220 25% 10%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 20% 90%;
+    --input: 214 20% 90%;
+    --ring: 220 70% 50%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 11%;
+    --sidebar-foreground: 210 20% 90%;
+    --sidebar-primary: 220 70% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 18%;
+    --sidebar-accent-foreground: 210 20% 95%;
+    --sidebar-border: 0 0% 20%;
+    --sidebar-ring: 220 70% 50%;
+
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 90% 55%;
+    --chart-4: 280 60% 55%;
+    --chart-5: 350 70% 55%;
+
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  .dark {
+    --background: 222 30% 8%;
+    --foreground: 210 20% 95%;
+
+    --card: 222 25% 12%;
+    --card-foreground: 210 20% 95%;
+
+    --popover: 222 25% 12%;
+    --popover-foreground: 210 20% 95%;
+
+    --primary: 220 70% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 217 25% 18%;
+    --secondary-foreground: 210 20% 95%;
+
+    --muted: 217 25% 18%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 217 25% 18%;
+    --accent-foreground: 210 20% 95%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 210 20% 95%;
+
+    --border: 217 25% 18%;
+    --input: 217 25% 18%;
+    --ring: 220 70% 55%;
+
+    --sidebar-background: 222 30% 10%;
+    --sidebar-foreground: 210 15% 80%;
+    --sidebar-primary: 220 70% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 25% 15%;
+    --sidebar-accent-foreground: 210 20% 95%;
+    --sidebar-border: 222 25% 15%;
+    --sidebar-ring: 220 70% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+  }
+}
+
+/* Uplift icon animations */
+
+/* Persuadables - Target: scale-in on load, pulse on hover */
+.uplift-icon-target svg {
+  animation: uplift-scale-in 0.4s ease-out both;
+}
+.group:hover .uplift-icon-target svg {
+  animation: uplift-target-pulse 0.35s ease-out;
+}
+
+@keyframes uplift-scale-in {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes uplift-target-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
+/* Sure Things - Check: stroke draw on load, pop on hover */
+.uplift-icon-check svg {
+  stroke-dasharray: 60;
+  stroke-dashoffset: 60;
+  animation: uplift-draw-stroke 0.5s ease-out 0.1s forwards;
+}
+.group:hover .uplift-icon-check svg {
+  stroke-dashoffset: 0;
+  animation: uplift-pop 0.25s ease-out;
+}
+
+@keyframes uplift-draw-stroke {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes uplift-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* Lost Causes - X: stroke draw on load, shake on hover */
+.uplift-icon-x svg {
+  stroke-dasharray: 80;
+  stroke-dashoffset: 80;
+  animation: uplift-draw-x 0.5s ease-out 0.15s forwards;
+}
+.group:hover .uplift-icon-x svg {
+  stroke-dashoffset: 0;
+  animation: uplift-shake 0.3s ease-out;
+}
+
+@keyframes uplift-draw-x {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes uplift-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+/* Sleeping Dogs - Moon: fade-in on load, glow on hover */
+.uplift-icon-moon svg {
+  animation: uplift-fade-in 0.4s ease-out both;
+  transition: filter 0.3s ease;
+}
+.group:hover .uplift-icon-moon svg {
+  filter: brightness(1.5) drop-shadow(0 0 6px hsla(210, 20%, 85%, 0.6));
+}
+
+@keyframes uplift-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
