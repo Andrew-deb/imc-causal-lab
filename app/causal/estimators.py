@@ -13,11 +13,6 @@ from app.schemas.modeling_schema import ModelResult, UpliftSegments
 logger = logging.getLogger(__name__)
 
 # UPLIFT SEGMENTATION — 4-segment classification
-def classify_uplift_segments(
-    ite: np.ndarray,
-    mu_0: np.ndarray | None=None,
-) -> UpliftSegments:
-
 
 def classify_uplift_segments(
     ite: np.ndarray,
@@ -284,7 +279,7 @@ class CausalForestEstimator(BaseEstimator):
     name = "causal_forest"
     def run(self, X, T, Y, feature_names=None) -> ModelResult:
         logger.info("Running Causal Forest (EconML CausalForestDML)...")
-        
+
         model = CausalForestDML(
             model_y=GradientBoostingRegressor(
                 n_estimators=200, max_depth=4, random_state=42

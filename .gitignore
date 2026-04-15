@@ -2,3 +2,5 @@
 /Marketing data (core)
 *.env
 venv
+*.cpython
+*.pyc
