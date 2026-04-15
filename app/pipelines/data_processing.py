@@ -17,9 +17,14 @@ def merge_datasets(
     campaigns_df: pd.DataFrame,
     imc_mapping: dict[str, str],
     col_mapping: ColumnMapping,
+    outcome_window_days: int = 30,
 ) -> pd.DataFrame:
     """
     Join customers + transactions, then link campaigns via date overlap.
+
+    Treatment window = campaign start → campaign end + outcome_window_days.
+    This captures both immediate (during-campaign) and delayed (post-campaign)
+    effects, which is standard in marketing effectiveness analysis.
 
     Returns one row per transaction with binary treatment indicators
     (T_advertising, T_direct_marketing, T_promotion, T_public_relations).
@@ -30,20 +35,21 @@ def merge_datasets(
     cust_id = col_mapping.customer_id_col
     ctype_col = col_mapping.campaign_type_col
 
-
+    # ── Parse dates ────────────────────────────────────────────────
     transactions_df[tx_date] = pd.to_datetime(transactions_df[tx_date])
     campaigns_df[start_col] = pd.to_datetime(campaigns_df[start_col])
     campaigns_df[end_col] = pd.to_datetime(campaigns_df[end_col])
 
-    
+    # ── Join customers + transactions ──────────────────────────────
     merged = transactions_df.merge(customers_df, on=cust_id, how="left")
     logger.info(f"Merged: {len(merged)} transactions × {len(customers_df)} customers")
 
-    # ── Add IMC category to campaigns
+    # ── Add IMC category to campaigns ──────────────────────────────
     campaigns_df["imc_category"] = campaigns_df[ctype_col].map(imc_mapping)
 
-
+    # ── Create per-category treatment indicators ───────────────────
     imc_categories = sorted(set(imc_mapping.values()))
+    window_delta = pd.Timedelta(days=outcome_window_days)
 
     for cat in imc_categories:
         t_col = f"T_{cat}"
@@ -51,13 +57,16 @@ def merge_datasets(
 
         cat_campaigns = campaigns_df[campaigns_df["imc_category"] == cat]
         for _, campaign in cat_campaigns.iterrows():
+            # Treatment window: campaign start → campaign end + outcome window
+            # Captures both during-campaign and delayed post-campaign effects
+            campaign_end_extended = campaign[end_col] + window_delta
             mask = (merged[tx_date] >= campaign[start_col]) & (
-                merged[tx_date] <= campaign[end_col]
+                merged[tx_date] <= campaign_end_extended
             )
             merged.loc[mask, t_col] = 1
 
         treated_pct = merged[t_col].mean() * 100
-        logger.info(f"  {cat}: {treated_pct:.1f}% treated")
+        logger.info(f"  {cat}: {treated_pct:.1f}% treated (window: campaign + {outcome_window_days}d)")
 
     return merged
 
@@ -112,13 +121,19 @@ def apply_temporal_alignment(
     outcome_window_days: int = 30,
 ) -> pd.DataFrame:
     """
-    Enforcing temporal ordering: confounders BEFORE campaigns, outcomes AFTER.
+    Enforce temporal ordering: confounders BEFORE treatment, outcomes AFTER.
 
-    Strategy:
-      1. Pre-period cutoff = earliest campaign start date
-      2. Compute per-customer RFM from transactions BEFORE the cutoff
-      3. Analysis period = cutoff to (latest campaign end + outcome_window)
-      4. Join RFM as confounders to analysis-period transactions
+    Strategy — Per-Customer Expanding RFM:
+      For each transaction, compute RFM using ONLY that customer's prior
+      transactions. This ensures temporal validity at every point in a
+      multi-year dataset without requiring a single global pre-period.
+
+      - Frequency: count of customer's previous transactions
+      - Monetary:  cumulative spend from previous transactions
+      - Recency:   days since customer's most recent previous transaction
+
+    The campaigns_df is used only for logging the analysis time span.
+    Treatment indicators (T_*) are already set by merge_datasets().
     """
     tx_date = col_mapping.transaction_date_col
     cust_id = col_mapping.customer_id_col
@@ -126,47 +141,54 @@ def apply_temporal_alignment(
     start_col = col_mapping.campaign_start_col
     end_col = col_mapping.campaign_end_col
 
-    # ── Define time boundaries
+    df = merged_df.copy()
+
+    # ── Log the dataset time span ──────────────────────────────────
     campaign_starts = pd.to_datetime(campaigns_df[start_col])
     campaign_ends = pd.to_datetime(campaigns_df[end_col])
-    pre_period_cutoff = campaign_starts.min()
-    outcome_end = campaign_ends.max() + pd.Timedelta(days=outcome_window_days)
-
-    logger.info(f"Pre-period: before {pre_period_cutoff.date()}")
-    logger.info(f"Analysis window: {pre_period_cutoff.date()} → {outcome_end.date()}")
-
-    # ── Split pre-period vs analysis 
-    pre_txns = merged_df[merged_df[tx_date] < pre_period_cutoff]
-    analysis_txns = merged_df[
-        (merged_df[tx_date] >= pre_period_cutoff)
-        & (merged_df[tx_date] <= outcome_end)
-    ].copy()
-
-    logger.info(f"Pre-period transactions: {len(pre_txns)}")
-    logger.info(f"Analysis transactions: {len(analysis_txns)}")
-
-    # ── Compute per-customer RFM from pre-period ───────────────────
-    rfm = (
-        pre_txns.groupby(cust_id)
-        .agg(
-            recency=(tx_date, lambda x: (pre_period_cutoff - x.max()).days),
-            frequency=(tx_date, "count"),
-            monetary=(amount_col, "sum"),
-        )
-        .reset_index()
+    logger.info(
+        f"Campaign span: {campaign_starts.min().date()} → {campaign_ends.max().date()} "
+        f"({(campaign_ends.max() - campaign_starts.min()).days} days)"
+    )
+    logger.info(
+        f"Transaction span: {df[tx_date].min().date()} → {df[tx_date].max().date()}"
     )
 
-    # ── Join RFM to analysis transactions ──────────────────────────
-    aligned = analysis_txns.merge(rfm, on=cust_id, how="left")
+    # ── Sort by customer then date (required for cumulative ops) ───
+    df = df.sort_values([cust_id, tx_date]).reset_index(drop=True)
 
-    # Fill NaN for customers with no pre-period history
-    aligned["recency"] = aligned["recency"].fillna(-1)
-    aligned["frequency"] = aligned["frequency"].fillna(0)
-    aligned["monetary"] = aligned["monetary"].fillna(0.0)
+    # ── Frequency: count of prior transactions per customer ────────
+    # cumcount() gives 0-based position within group (0, 1, 2, ...)
+    # which equals the count of transactions BEFORE this one
+    df["frequency"] = df.groupby(cust_id).cumcount()
 
-    logger.info(f"Aligned dataset: {len(aligned)} rows, {len(rfm)} customers with RFM")
+    # ── Monetary: cumulative spend from prior transactions ─────────
+    # cumsum() then shift by 1 so current transaction is excluded
+    df["monetary"] = (
+        df.groupby(cust_id)[amount_col]
+        .cumsum()
+        .groupby(df[cust_id])
+        .shift(1, fill_value=0.0)
+    )
 
-    return aligned
+    # ── Recency: days since previous transaction ───────────────────
+    # diff() gives timedelta to previous row within group
+    # First transaction per customer has no prior → fill with -1
+    df["recency"] = (
+        df.groupby(cust_id)[tx_date]
+        .diff()
+        .dt.days
+        .fillna(-1)
+        .astype(int)
+    )
+
+    logger.info(
+        f"Temporal alignment complete: {len(df)} rows, "
+        f"frequency range [{df['frequency'].min()}-{df['frequency'].max()}], "
+        f"monetary range [{df['monetary'].min():.0f}-{df['monetary'].max():.0f}]"
+    )
+
+    return df
 
 
 # 4. FEATURE ENGINEERING
