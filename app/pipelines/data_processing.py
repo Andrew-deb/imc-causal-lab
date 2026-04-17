@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 import pandas as pd
-import sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 
 from app.configs import settings
 from app.schemas.modeling_schema import ColumnMapping, TreatmentBalanceResult
@@ -191,12 +191,107 @@ def apply_temporal_alignment(
     return df
 
 
-# 4. FEATURE ENGINEERING
+# 4. TREATMENT BALANCE CHECK
+
+def check_treatment_balance(
+    merged_df: pd.DataFrame,
+    imc_categories: list[str],
+    all_possible_categories: list[str] | None = None,
+) -> list[TreatmentBalanceResult]:
+    """
+    Evaluate T/C balance for each IMC category.
+
+    Status thresholds (from configs):
+      - GOOD:         treated_pct between 20-80%
+      - WARNING:      treated_pct between 10-20% or 80-90%
+      - INSUFFICIENT: treated_pct below 10% or above 90%
+
+    Also handles categories that exist in the IMC taxonomy but have
+    no mapped campaigns in the dataset.
+    """
+    results = []
+
+    # Check each category that HAS campaigns mapped to it
+    for cat in imc_categories:
+        t_col = f"T_{cat}"
+        if t_col not in merged_df.columns:
+            continue
+
+        total = len(merged_df)
+        treated = int(merged_df[t_col].sum())
+        control = total - treated
+        treated_pct = treated / total if total > 0 else 0.0
+
+        # Determine status and message using config thresholds
+        if treated_pct < settings.BALANCE_INSUFFICIENT_MIN or treated_pct > settings.BALANCE_INSUFFICIENT_MAX:
+            status = "insufficient"
+            message = (
+                f"Causal analysis unavailable for {cat}: treatment/control split "
+                f"is {treated_pct:.0%}/{1-treated_pct:.0%}, which is too imbalanced "
+                f"for reliable causal estimation. A minimum of {settings.BALANCE_INSUFFICIENT_MIN:.0%} "
+                f"in both groups is required."
+            )
+        elif treated_pct < settings.BALANCE_GOOD_MIN or treated_pct > settings.BALANCE_GOOD_MAX:
+            status = "warning"
+            message = (
+                f"Treatment/control split for {cat} is {treated_pct:.0%}/{1-treated_pct:.0%}. "
+                f"Results may have higher variance due to imbalance. "
+                f"Ideal range is {settings.BALANCE_GOOD_MIN:.0%}-{settings.BALANCE_GOOD_MAX:.0%}."
+            )
+        else:
+            status = "good"
+            message = (
+                f"Treatment/control split for {cat} is {treated_pct:.0%}/{1-treated_pct:.0%}. "
+                f"Balance is within the ideal range for causal estimation."
+            )
+
+        results.append(TreatmentBalanceResult(
+            imc_category=cat,
+            treated_count=treated,
+            control_count=control,
+            treated_pct=round(treated_pct, 4),
+            status=status,
+            message=message,
+        ))
+
+        log_fn = logger.info if status == "good" else logger.warning
+        log_fn(
+            f"  {cat}: {treated:,} treated / {control:,} control "
+            f"({treated_pct:.1%}) [{status.upper()}]"
+        )
+
+    # Check for categories that are NOT present in the data at all
+    if all_possible_categories:
+        mapped_cats = set(imc_categories)
+        for cat in all_possible_categories:
+            if cat not in mapped_cats:
+                results.append(TreatmentBalanceResult(
+                    imc_category=cat,
+                    treated_count=0,
+                    control_count=0,
+                    treated_pct=0.0,
+                    status="not_in_dataset",
+                    message=(
+                        f"No campaigns in the dataset map to the '{cat}' IMC category. "
+                        f"This category requires campaign types such as "
+                        f"{'public relations, sponsorship, or event marketing' if cat == 'public_relations' else cat.replace('_', ' ')} "
+                        f"campaigns to be present in the uploaded data."
+                    ),
+                ))
+                logger.info(
+                    f"  {cat}: No campaigns mapped to this category in the dataset"
+                )
+
+    return results
+
+
+# 5. FEATURE ENGINEERING
 
 def engineer_features(
     aligned_df: pd.DataFrame,
     imc_categories: list[str],
     col_mapping: ColumnMapping,
+    balance_results: list[TreatmentBalanceResult] | None = None,
 ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """
     Encode, impute, standardise → {channel_name: (X, T, Y)}.
@@ -208,9 +303,23 @@ def engineer_features(
 
     Treatment (T): binary T_{category} per channel
     Outcome (Y): transaction amount
+
+    Skips categories flagged as 'insufficient' or 'not_in_dataset' by
+    the balance check — these cannot be used for causal estimation.
     """
     amount_col = col_mapping.transaction_amount_col
     df = aligned_df.copy()
+
+    # ── Determine which categories to skip ─────────────────────────
+    skip_categories = set()
+    if balance_results:
+        for br in balance_results:
+            if br.status in ("insufficient", "not_in_dataset"):
+                skip_categories.add(br.imc_category)
+                logger.warning(
+                    f"  Skipping '{br.imc_category}': status={br.status} — "
+                    f"cannot perform causal estimation"
+                )
 
     # ── Auto-detect confounder columns 
     # Demographics (common columns from customers table)
@@ -226,18 +335,21 @@ def engineer_features(
     confounder_cols = demographic_cols + rfm_cols + extra_cols
     logger.info(f"Confounders: {confounder_cols}")
 
-    # ── Encode categoricals 
+    # ── Impute missing values (before encoding) 
+    for col in confounder_cols:
+        if df[col].isna().any():
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].fillna(df[col].median())
+            else:
+                df[col] = df[col].fillna(df[col].mode().iloc[0] if len(df[col].mode()) > 0 else "unknown")
+
+    # ── Encode categoricals (after imputation)
     label_encoders = {}
     for col in confounder_cols:
-        if df[col].dtype == "object":
+        if pd.api.types.is_string_dtype(df[col]):
             le = LabelEncoder()
             df[col] = le.fit_transform(df[col].astype(str))
             label_encoders[col] = le
-
-    # ── Impute missing values 
-    for col in confounder_cols:
-        if df[col].isna().any():
-            df[col] = df[col].fillna(df[col].median())
 
     # ── Standardise numeric features 
     scaler = StandardScaler()
@@ -246,6 +358,10 @@ def engineer_features(
     # ── Build per-channel (X, T, Y) tuples 
     result = {}
     for cat in imc_categories:
+        # Skip categories that failed balance check
+        if cat in skip_categories:
+            continue
+
         t_col = f"T_{cat}"
         X = df[confounder_cols].values
         T = df[t_col].values.astype(int)
@@ -257,3 +373,4 @@ def engineer_features(
         )
 
     return result, confounder_cols, scaler, label_encoders
+

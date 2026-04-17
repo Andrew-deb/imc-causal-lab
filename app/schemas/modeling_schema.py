@@ -34,7 +34,8 @@ class TreatmentBalanceResult(BaseModel):
     treated_count: int
     control_count: int
     treated_pct: float
-    status: str
+    status: str  # "good", "warning", "insufficient", "not_in_dataset"
+    message: str = ""
 
 class UpliftSegments(BaseModel):
     """Proportion of customers in each uplift segment."""
