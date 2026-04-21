@@ -403,9 +403,27 @@ def engineer_features(
             continue
 
         t_col = f"T_{cat}"
-        X = df[confounder_cols].values
-        T = df[t_col].values.astype(int)
-        Y = df[amount_col].values.astype(float)
+
+        # Build a clean subset: drop rows where Y or any confounder is NaN
+        subset = df[confounder_cols + [t_col, amount_col]].copy()
+        before_len = len(subset)
+        subset = subset.dropna()
+        dropped = before_len - len(subset)
+        if dropped > 0:
+            logger.info(f"  {cat}: dropped {dropped} NaN rows ({dropped/before_len*100:.1f}%)")
+
+        X = subset[confounder_cols].values
+        T = subset[t_col].values.astype(int)
+        Y = subset[amount_col].values.astype(float)
+
+        # Safety: skip if only one class in T after NaN filtering
+        unique_classes = set(T)
+        if len(unique_classes) < 2:
+            logger.warning(
+                f"  Skipping '{cat}': only class(es) {unique_classes} in T after filtering "
+                f"— need both treated (1) and control (0)"
+            )
+            continue
 
         result[cat] = (X, T, Y)
         logger.info(
