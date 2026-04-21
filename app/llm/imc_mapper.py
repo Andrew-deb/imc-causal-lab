@@ -1,7 +1,7 @@
 import httpx
 import json
 import logging
-from abc import ABC, abstarctmethod
+from abc import ABC, abstractmethod
 
 from app.configs import settings
 from app.schemas.imc_mapping import IMCCategory
@@ -29,25 +29,25 @@ Valid category_value options: "advertising", "promotion", "public_relations", "d
 
 # LLM mapper Interface
 
-class BaseLLMapper(ABC):
+class BaseLLMMapper(ABC):
 
-    @abstarctmethod
-    async def map_capmpaign_types(self, campaign_types: list[str]) -> dict[str, str]:
+    @abstractmethod
+    async def map_campaign_types(self, campaign_types: list[str]) -> dict[str, str]:
         pass 
 
     
 # Open Router Concrete Implementation
-class OpenRouterMapper(BaseLLMapper):
-      """Maps campaign types to IMC categories via OpenRouter API."""
+class OpenRouterMapper(BaseLLMMapper):
+    """Maps campaign types to IMC categories via OpenRouter API."""
       
-    API_URL= "https://openrouter.ai/api/v1/chat/completions"
+    API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
     def __init__(self):
         self.api_key = settings.LLM_API_KEY
-        self.model = setting.LLM_MODEL
+        self.model = settings.LLM_MODEL
 
-    async def map_capmpaign_types(self, campaign_types):
-        prompt = KOTLER_KELLER_PROMPT.Format(
+    async def map_campaign_types(self, campaign_types):
+        prompt = KOTLER_KELLER_PROMPT.format(
             campaign_types=json.dumps(campaign_types)
         )
 
@@ -56,27 +56,25 @@ class OpenRouterMapper(BaseLLMapper):
                 self.API_URL,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 },
-
                 json={
                     "model": self.model,
                     "messages": [
                         {
                             "role": "system",
                             "content": "You are a marketing classification expert. Respond only with valid JSON.",
-                        }
-
-                        {"role": "user", "content": prompt}
+                        },
+                        {"role": "user", "content": prompt},
                     ],
-                    "temperature": 0.0
+                    "temperature": 0.0,
                 },
             )
             response.raise_for_status()
 
-            raw = response.json()["choices"][0]["message"]["content"].strip()
+        raw = response.json()["choices"][0]["message"]["content"].strip()
 
-            # Strip markdown code fences if present
+        # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

@@ -329,11 +329,39 @@ def engineer_features(
     # RFM columns (from temporal alignment)
     rfm_cols = ["recency", "frequency", "monetary"]
 
-    # User-specified additional confounders
-    extra_cols = [c for c in col_mapping.confounder_cols if c in df.columns]
+    # User-specified additional confounders — filter unsuitable columns
+    auto_cols = set(demographic_cols + rfm_cols)
+    # Columns that must never be confounders
+    exclude_cols = {
+        col_mapping.customer_id_col,
+        col_mapping.transaction_amount_col,
+        col_mapping.transaction_date_col,
+        col_mapping.campaign_start_col,
+        col_mapping.campaign_end_col,
+        col_mapping.campaign_type_col,
+        "transaction_id", "imc_category",
+    }
+    # Also exclude treatment indicator columns
+    exclude_cols.update(f"T_{cat}" for cat in imc_categories)
+
+    extra_cols = []
+    for c in col_mapping.confounder_cols:
+        if c not in df.columns:
+            continue
+        if c in auto_cols or c in exclude_cols:
+            continue
+        # Skip datetime columns — can't be standardised
+        if pd.api.types.is_datetime64_any_dtype(df[c]):
+            logger.info(f"  Skipping confounder '{c}': datetime column")
+            continue
+        # Skip columns that look like IDs (all unique strings/ints)
+        if df[c].nunique() == len(df):
+            logger.info(f"  Skipping confounder '{c}': all-unique (likely an ID)")
+            continue
+        extra_cols.append(c)
 
     confounder_cols = demographic_cols + rfm_cols + extra_cols
-    logger.info(f"Confounders: {confounder_cols}")
+    logger.info(f"Confounders ({len(confounder_cols)}): {confounder_cols}")
 
     # ── Impute missing values (before encoding) 
     for col in confounder_cols:
@@ -346,10 +374,22 @@ def engineer_features(
     # ── Encode categoricals (after imputation)
     label_encoders = {}
     for col in confounder_cols:
-        if pd.api.types.is_string_dtype(df[col]):
+        if pd.api.types.is_string_dtype(df[col]) or df[col].dtype == "object":
             le = LabelEncoder()
             df[col] = le.fit_transform(df[col].astype(str))
             label_encoders[col] = le
+    # ── Final safety: ensure all confounders are numeric after encoding ──
+    safe_cols = []
+    for col in confounder_cols:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            logger.warning(f"  Dropping confounder '{col}': still datetime after encoding")
+            continue
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            logger.warning(f"  Dropping confounder '{col}': non-numeric dtype {df[col].dtype}")
+            continue
+        safe_cols.append(col)
+    confounder_cols = safe_cols
+    logger.info(f"Final confounders ({len(confounder_cols)}): {confounder_cols}")
 
     # ── Standardise numeric features 
     scaler = StandardScaler()

@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     # LLM Configurations
     LLM_PROVIDER: str = "openrouter"
     LLM_API_KEY: str = ""
-    LLM_MODEL: str = "qwen/qwen3.6-plus-preview:free"
+    LLM_MODEL: str = "anthropic/claude-opus-4.7"
 
     # Model Configurations
     OUTCOME_WINDOW_DAYS: int = 30
