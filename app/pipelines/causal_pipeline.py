@@ -2,6 +2,7 @@ import logging
 import uuid
 import numpy as np
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.configs import settings
 from app.schemas.modeling_schema import (
@@ -298,18 +299,13 @@ def run_pipeline(
     # Columns to use for CATE subgroup analysis
     segment_cols = ["gender", "state", "preferred_channel"]
 
-    # ── Step 5 & 6: Run estimators per channel ─────────────────────
+    # ── Step 5 & 6: Run estimators per channel (parallel) ──────────
     logger.info("Step 5: Running estimators...")
     estimators = get_all_estimators(config.models_to_run)
 
-    channel_results: dict[str, ChannelResult] = {}
-    cross_model_comparisons: dict[str, CrossModelComparison] = {}
-    assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
-    channel_summaries: list[ChannelSummary] = []
-
-    for channel_name, (X, T, Y) in channel_data.items():
+    def _run_channel(channel_name: str, X, T, Y):
+        """Run all estimators for a single channel. Thread-safe."""
         logger.info(f"\n  === Channel: {channel_name} ===")
-
         model_results: dict[str, ModelResult] = {}
 
         for estimator in estimators:
@@ -320,7 +316,6 @@ def run_pipeline(
                 # Populate CATE by segment for the best causal model
                 if estimator.name == "causal_forest" and result.ite_array:
                     full_ite = np.array(result.ite_array)
-                    # Use aligned DataFrame (rows match X indices)
                     result.cate_by_segment = _compute_cate_by_segment(
                         full_ite, aligned.head(len(full_ite)), segment_cols
                     )
@@ -330,7 +325,6 @@ def run_pipeline(
 
             except Exception as e:
                 logger.error(f"    {estimator.name} FAILED: {e}")
-                # Create a fallback result so the pipeline doesn't crash
                 model_results[estimator.name] = ModelResult(
                     model_name=estimator.name,
                     ate=0.0,
@@ -342,30 +336,51 @@ def run_pipeline(
         channel_result = _build_channel_result(
             channel_name, model_results, balance_status
         )
-        channel_results[channel_name] = channel_result
-
-        # Build comparisons
-        cross_model_comparisons[channel_name] = _build_cross_model_comparison(
-            model_results
-        )
-        assoc_vs_causal[channel_name] = _build_associative_vs_causal(
+        cross = _build_cross_model_comparison(model_results)
+        avc = _build_associative_vs_causal(
             channel_name, model_results, channel_result.consensus_ate
         )
 
-        # Build channel summary row
         persuadables_pct = 0.0
         best_result = model_results.get(channel_result.best_model)
         if best_result and best_result.uplift_segments:
             persuadables_pct = best_result.uplift_segments.persuadables
 
-        channel_summaries.append(ChannelSummary(
+        summary = ChannelSummary(
             channel=channel_name,
             consensus_ate=channel_result.consensus_ate,
             best_model=channel_result.best_model,
             agreement_score=channel_result.agreement_score,
             persuadables_pct=round(persuadables_pct, 4),
             confidence_level=channel_result.confidence_level,
-        ))
+        )
+        return channel_name, channel_result, cross, avc, summary
+
+    # Run channels in parallel (up to 3 workers)
+    channel_results: dict[str, ChannelResult] = {}
+    cross_model_comparisons: dict[str, CrossModelComparison] = {}
+    assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
+    channel_summaries: list[ChannelSummary] = []
+
+    n_channels = len(channel_data)
+    max_workers = min(n_channels, 3)
+    logger.info(f"  Running {n_channels} channels with {max_workers} parallel workers")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_run_channel, ch, X, T, Y): ch
+            for ch, (X, T, Y) in channel_data.items()
+        }
+        for future in as_completed(futures):
+            ch_name = futures[future]
+            try:
+                name, ch_result, cross, avc, summary = future.result()
+                channel_results[name] = ch_result
+                cross_model_comparisons[name] = cross
+                assoc_vs_causal[name] = avc
+                channel_summaries.append(summary)
+            except Exception as e:
+                logger.error(f"  Channel '{ch_name}' failed entirely: {e}")
 
     # ── Step 7: Build channel ranking ──────────────────────────────
     # Rank channels by consensus ATE (descending)
@@ -403,3 +418,140 @@ def run_pipeline(
     logger.info(f"  Top channel: {channel_ranking[0]['channel'] if channel_ranking else 'none'}")
 
     return result
+
+
+# ── EVALUATION PIPELINE ─────────────────────────────────────────────
+
+def run_evaluation(
+    customers_df: pd.DataFrame,
+    transactions_df: pd.DataFrame,
+    campaigns_df: pd.DataFrame,
+    imc_mapping: dict[str, str],
+    col_mapping: ColumnMapping,
+    config: ModelingConfig | None = None,
+) -> dict:
+    """
+    Run the evaluation pipeline: compute uplift metrics + descriptive stats.
+
+    Re-runs merge/align/engineer to get (X, T, Y) per channel, then:
+      1. Fits each estimator and extracts ITEs + propensity scores
+      2. Computes evaluation metrics (Uplift AUC, Qini, Precision@K, etc.)
+      3. Computes descriptive statistics (Treatment vs Control comparison)
+
+    Returns a dict ready for EvaluationResponse serialisation.
+    """
+    from app.causal.evaluation import compute_all_metrics
+    from app.pipelines.data_processing import compute_descriptive_statistics
+    from app.schemas.modeling_schema import (
+        EvaluationMetrics, ModelEvaluationResult,
+        ChannelEvaluationResult, EvaluationResponse,
+    )
+
+    if config is None:
+        config = ModelingConfig()
+
+    session_id = str(uuid.uuid4())
+    logger.info(f"=== Evaluation started [session={session_id[:8]}] ===")
+
+    # Steps 1-4: same as run_pipeline
+    merged = merge_datasets(
+        customers_df, transactions_df, campaigns_df,
+        imc_mapping, col_mapping,
+        outcome_window_days=config.outcome_window_days,
+    )
+    imc_categories = sorted(set(imc_mapping.values()))
+    balance_results = check_treatment_balance(
+        merged, imc_categories, all_possible_categories=ALL_IMC_CATEGORIES
+    )
+    aligned = apply_temporal_alignment(merged, campaigns_df, col_mapping)
+
+    # Descriptive statistics (before feature encoding)
+    logger.info("Computing descriptive statistics...")
+    desc_stats = compute_descriptive_statistics(
+        aligned, imc_categories, col_mapping, balance_results
+    )
+
+    channel_data, confounder_cols, _, _ = engineer_features(
+        aligned, imc_categories, col_mapping, balance_results=balance_results
+    )
+
+    # Step 5: Run estimators + compute metrics
+    logger.info("Running estimators for evaluation...")
+    estimators = get_all_estimators(config.models_to_run)
+    channel_evals = {}
+
+    for ch, (X, T, Y) in channel_data.items():
+        logger.info(f"  Evaluating channel: {ch}")
+        model_evals = {}
+
+        for estimator in estimators:
+            try:
+                logger.info(f"    {estimator.name}...")
+                # Fit and get ITEs
+                result = estimator.run(X, T, Y, feature_names=confounder_cols)
+                ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
+
+                # Pad/trim ITE to match T length (ite_array is capped at 500)
+                if len(ite) < len(T):
+                    full_ite = np.full(len(T), np.mean(ite))
+                    full_ite[:len(ite)] = ite
+                    ite = full_ite
+
+                # Extract propensity scores where available
+                propensity = None
+                if estimator.name == "dr_learner":
+                    try:
+                        propensity = estimator._last_propensity
+                    except AttributeError:
+                        pass
+                elif estimator.name == "causal_forest":
+                    try:
+                        propensity = estimator._last_propensity
+                    except AttributeError:
+                        pass
+
+                # Compute all metrics
+                metrics = compute_all_metrics(ite, T, Y, propensity, k=0.10)
+                model_evals[estimator.name] = ModelEvaluationResult(
+                    model_name=estimator.name,
+                    metrics=EvaluationMetrics(**metrics),
+                )
+                logger.info(
+                    f"    {estimator.name}: uplift_auc={metrics['uplift_auc']}, "
+                    f"qini_auc={metrics['qini_auc']}"
+                )
+            except Exception as e:
+                logger.error(f"    {estimator.name} evaluation failed: {e}")
+                model_evals[estimator.name] = ModelEvaluationResult(
+                    model_name=estimator.name,
+                    metrics=EvaluationMetrics(),
+                )
+
+        channel_evals[ch] = ChannelEvaluationResult(
+            channel_name=ch,
+            model_evaluations=model_evals,
+        )
+
+    # Build flattened performance summary table
+    summary_table = []
+    for ch, ch_eval in channel_evals.items():
+        for model_name, model_eval in ch_eval.model_evaluations.items():
+            m = model_eval.metrics
+            summary_table.append({
+                "channel": ch,
+                "model": model_name,
+                "uplift_auc": m.uplift_auc,
+                "qini_auc": m.qini_auc,
+                "precision_at_10pct": m.precision_at_k,
+                "recall_at_10pct": m.recall_at_k,
+                "base_classifier_auc": m.base_classifier_auc,
+            })
+
+    logger.info(f"=== Evaluation complete [session={session_id[:8]}] ===")
+
+    return EvaluationResponse(
+        session_id=session_id,
+        channel_evaluations=channel_evals,
+        descriptive_statistics=desc_stats,
+        model_performance_summary=summary_table,
+    )

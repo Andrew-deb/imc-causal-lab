@@ -1,6 +1,33 @@
 from pydantic import BaseModel
 from typing import Optional
 
+
+# ── Evaluation Metrics (Marthalia Table 2) ──────────────────────────
+
+class EvaluationMetrics(BaseModel):
+    """Per-model uplift evaluation metrics."""
+    uplift_auc: Optional[float] = None
+    qini_auc: Optional[float] = None
+    precision_at_k: Optional[float] = None   # k=10%
+    recall_at_k: Optional[float] = None      # k=10%
+    base_classifier_auc: Optional[float] = None
+
+
+class DescriptiveStats(BaseModel):
+    """Single variable comparison: treated vs control."""
+    variable: str
+    treated_mean: float
+    control_mean: float
+    std_diff: float  # Cohen's d standardized difference
+
+
+class ChannelDescriptiveStats(BaseModel):
+    """Descriptive statistics for one IMC channel (Marthalia Table 1)."""
+    channel_name: str
+    n_treated: int
+    n_control: int
+    stats: list[DescriptiveStats]
+
 class ColumnMapping(BaseModel):
     
     # Required fields for the uploaded dataset.
@@ -53,7 +80,6 @@ class ModelResult(BaseModel):
     ite_array: Optional[list[float]] = None
     cate_by_segment: Optional[dict[str, dict[str, float]]] = None
     uplift_segments: Optional[UpliftSegments] = None
-    qini_score: Optional[float] = None
     feature_importances: Optional[dict[str, float]] = None
 
 class ChannelResult(BaseModel):
@@ -104,3 +130,25 @@ class PipelineResult(BaseModel):
 
     # --- Metadata ---
     imc_mapping: dict[str, str]
+
+
+# ── Evaluation Response (separate endpoint) ─────────────────────────
+
+class ModelEvaluationResult(BaseModel):
+    """Evaluation metrics for one model on one channel."""
+    model_name: str
+    metrics: EvaluationMetrics
+
+
+class ChannelEvaluationResult(BaseModel):
+    """All model evaluations for one channel."""
+    channel_name: str
+    model_evaluations: dict[str, ModelEvaluationResult]
+
+
+class EvaluationResponse(BaseModel):
+    """Complete response for the /evaluate endpoint."""
+    session_id: str
+    channel_evaluations: dict[str, ChannelEvaluationResult]
+    descriptive_statistics: dict[str, ChannelDescriptiveStats]
+    model_performance_summary: list[dict]  # flattened table for easy display

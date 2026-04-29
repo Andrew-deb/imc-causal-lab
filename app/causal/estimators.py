@@ -1,11 +1,12 @@
 import logging
 import numpy as np
 from abc import ABC, abstractmethod
-from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from econml.metalearners import TLearner
 from econml.dr import DRLearner
 from econml.dml import CausalForestDML
+from econml.sklearn_extensions.linear_model import StatsModelsLinearRegression
 
 from app.configs import settings
 from app.schemas.modeling_schema import ModelResult, UpliftSegments
@@ -87,51 +88,42 @@ class BaseEstimator(ABC):
         ...
 
 
-# 1. LOGISTIC REGRESSION (associative baseline)
+# 1. LINEAR REGRESSION (associative baseline)
 
 class LogisticRegressionEstimator(BaseEstimator):
     """
-    Associative baseline.
+    Associative baseline using Linear Regression on continuous Y.
 
-    Fits a logistic regression of Y on [X, T]. The coefficient on T
-    gives an associative (confounded) estimate of the treatment effect.
+    Fits Y ~ X + T via OLS. The coefficient on T gives an associative
+    (confounded) estimate on the SAME dollar scale as the causal models.
     Used as a comparison point to show what happens without causal methods.
     """
     name = "logistic_regression"
 
     def run(self, X, T, Y, feature_names=None) -> ModelResult:
-        logger.info("Running Logistic Regression (associative baseline)...")
-
-        # Binarise Y for logistic regression (above median = 1)
-
-        Y_binary = (Y > np.median(Y)).astype(int)
+        logger.info("Running Linear Regression (associative baseline)...")
 
         # Combine X and T as features
-
         X_with_T = np.column_stack([X, T])
-        model = LogisticRegression(max_iter=1000, random_state=42)
-        model.fit(X_with_T, Y_binary)
+        model = LinearRegression()
+        model.fit(X_with_T, Y)
 
         # The coefficient on T (last feature) is the associative effect
+        treatment_coef = float(model.coef_[-1])
 
-        treatment_coef = float(model.coef_[0, -1])
-
-        # Predict probabilities with T=1 and T=0 for each observation
-
+        # Predict outcomes with T=1 and T=0 for each observation
         X_treated = np.column_stack([X, np.ones(len(X))])
         X_control = np.column_stack([X, np.zeros(len(X))])
-        prob_treated = model.predict_proba(X_treated)[:, 1]
-        prob_control = model.predict_proba(X_control)[:, 1]
+        y_treated = model.predict(X_treated)
+        y_control = model.predict(X_control)
 
-        # ITE approximation: difference in predicted probabilities
-
-        ite = prob_treated - prob_control
+        # ITE: difference in predicted outcomes (dollar scale)
+        ite = y_treated - y_control
         ate = float(np.mean(ite))
         att = float(np.mean(ite[T == 1])) if np.sum(T == 1) > 0 else ate
-        logger.info(f"  LogReg ATE={ate:.4f}, ATT={att:.4f}, coef(T)={treatment_coef:.4f}")
+        logger.info(f"  LinearReg ATE={ate:.4f}, ATT={att:.4f}, coef(T)={treatment_coef:.4f}")
 
-        # LogReg has no proper counterfactual → ITE-only fallback
-
+        # LinearReg has no proper counterfactual → ITE-only fallback
         return ModelResult(
             model_name=self.name,
             ate=round(ate, 6),
@@ -157,11 +149,12 @@ class TLearnerEstimator(BaseEstimator):
 
     def run(self, X, T, Y, feature_names=None) -> ModelResult:
         logger.info("Running T-Learner...")
+        n_est = settings.FIRST_STAGE_N_ESTIMATORS
 
         model = TLearner(
             models=[
-                GradientBoostingRegressor(n_estimators=200, max_depth=4, random_state=42),
-                GradientBoostingRegressor(n_estimators=200, max_depth=4, random_state=42)
+                GradientBoostingRegressor(n_estimators=n_est, max_depth=4, random_state=42),
+                GradientBoostingRegressor(n_estimators=n_est, max_depth=4, random_state=42),
             ]
         )
         model.fit(Y, T, X=X)
@@ -215,21 +208,26 @@ class DRLearnerEstimator(BaseEstimator):
 
     def run(self, X, T, Y, feature_names=None) -> ModelResult:
         logger.info("Running DR-Learner (EconML)...")
+        n_est = settings.FIRST_STAGE_N_ESTIMATORS
 
         model = DRLearner(
             model_propensity=GradientBoostingClassifier(
-                n_estimators=200, max_depth=4, random_state=42
+                n_estimators=n_est, max_depth=4, random_state=42
             ),
             model_regression=GradientBoostingRegressor(
-                n_estimators=200, max_depth=4, random_state=42
+                n_estimators=n_est, max_depth=4, random_state=42
             ),
-            model_final=GradientBoostingRegressor(
-                n_estimators=100, max_depth=3, random_state=42
-            ),
+            model_final=StatsModelsLinearRegression(),
             cv=settings.CROSS_FITTING_FOLDS,
             random_state=42,
         )
         model.fit(Y, T, X=X)
+
+        # Store propensity scores for evaluation metrics
+        try:
+            self._last_propensity = model.propensity_model_.predict_proba(X)[:, 1]
+        except Exception:
+            self._last_propensity = None
 
         # Individual treatment effects
         ite = model.effect(X).flatten()
@@ -279,19 +277,26 @@ class CausalForestEstimator(BaseEstimator):
     name = "causal_forest"
     def run(self, X, T, Y, feature_names=None) -> ModelResult:
         logger.info("Running Causal Forest (EconML CausalForestDML)...")
+        n_est = settings.FIRST_STAGE_N_ESTIMATORS
 
         model = CausalForestDML(
             model_y=GradientBoostingRegressor(
-                n_estimators=200, max_depth=4, random_state=42
+                n_estimators=n_est, max_depth=4, random_state=42
             ),
-            model_t=GradientBoostingClassifier(
-                n_estimators=200, max_depth=4, random_state=42
+            model_t=GradientBoostingRegressor(
+                n_estimators=n_est, max_depth=4, random_state=42
             ),
             n_estimators=settings.CAUSAL_FOREST_N_ESTIMATORS,
             cv=settings.CROSS_FITTING_FOLDS,
             random_state=42,
         )
         model.fit(Y, T, X=X)
+
+        # Store propensity scores for evaluation metrics
+        try:
+            self._last_propensity = model.model_t_.predict(X).flatten()
+        except Exception:
+            self._last_propensity = None
 
         # Individual treatment effects
 

@@ -425,6 +425,14 @@ def engineer_features(
             )
             continue
 
+        # Performance: subsample large datasets (configurable via MAX_SUBSAMPLE_ROWS)
+        max_rows = settings.MAX_SUBSAMPLE_ROWS
+        if max_rows > 0 and len(X) > max_rows:
+            rng = np.random.RandomState(42)
+            idx = rng.choice(len(X), max_rows, replace=False)
+            X, T, Y = X[idx], T[idx], Y[idx]
+            logger.info(f"  {cat}: subsampled {before_len} -> {max_rows} rows for speed")
+
         result[cat] = (X, T, Y)
         logger.info(
             f"  {cat}: X{X.shape}, T(treated={T.sum()}, control={len(T)-T.sum()}), Y(mean={Y.mean():.2f})"
@@ -432,3 +440,132 @@ def engineer_features(
 
     return result, confounder_cols, scaler, label_encoders
 
+
+# 6. DESCRIPTIVE STATISTICS (Treatment vs Control)
+
+def compute_descriptive_statistics(
+    aligned_df: pd.DataFrame,
+    imc_categories: list[str],
+    col_mapping: ColumnMapping,
+    balance_results: list[TreatmentBalanceResult] | None = None,
+) -> dict:
+    """
+    Compute Treatment vs Control descriptive statistics per channel.
+    Aligned with Marthalia (2024) Table 1 for thesis comparability.
+
+    Variables computed:
+      - Average Order Value (transaction amount mean)
+      - Recency (days since last purchase)
+      - Frequency (prior transaction count)
+      - Monetary (cumulative prior spend)
+      - Product Category Diversity (unique categories per customer)
+      - Discount Applied (% of transactions with discount)
+
+    Standardized Difference = Cohen's d:
+      d = (mean_treated - mean_control) / sqrt((var_T + var_C) / 2)
+    Values > 0.1 indicate meaningful imbalance (Rosenbaum & Rubin, 1985).
+    """
+    from app.schemas.modeling_schema import DescriptiveStats, ChannelDescriptiveStats
+
+    amount_col = col_mapping.transaction_amount_col
+    df = aligned_df.copy()
+
+    # Determine which categories to skip
+    skip_cats = set()
+    if balance_results:
+        for br in balance_results:
+            if br.status in ("insufficient", "not_in_dataset"):
+                skip_cats.add(br.imc_category)
+
+    # ── Prepare derived variables ────────────────────────────────
+    # Product category diversity (unique categories per customer, broadcast to rows)
+    cust_id = col_mapping.customer_id_col
+    if "product_category" in df.columns:
+        cat_diversity = df.groupby(cust_id)["product_category"].transform("nunique")
+        df["product_category_diversity"] = cat_diversity
+    else:
+        df["product_category_diversity"] = 0
+
+    # Discount applied rate (binary: was a discount used?)
+    if "discount_applied" in df.columns:
+        df["has_discount"] = (df["discount_applied"] > 0).astype(float)
+    else:
+        df["has_discount"] = 0.0
+
+    # Average order value = transaction amount (already available)
+    # RFM cols (recency, frequency, monetary) already computed by temporal alignment
+
+    # ── Variables to compare ─────────────────────────────────────
+    variables = {
+        "Average Order Value": amount_col,
+        "Recency (days)": "recency",
+        "Frequency": "frequency",
+        "Monetary (cumulative)": "monetary",
+        "Product Category Diversity": "product_category_diversity",
+        "Discount Applied (%)": "has_discount",
+    }
+
+    def _cohens_d(treated_vals, control_vals):
+        """Compute Cohen's d standardized difference."""
+        var_t = np.var(treated_vals, ddof=1) if len(treated_vals) > 1 else 0
+        var_c = np.var(control_vals, ddof=1) if len(control_vals) > 1 else 0
+        pooled_std = np.sqrt((var_t + var_c) / 2)
+        if pooled_std < 1e-10:
+            return 0.0
+        return (np.mean(treated_vals) - np.mean(control_vals)) / pooled_std
+
+    # ── Compute per channel ──────────────────────────────────────
+    result = {}
+    for cat in imc_categories:
+        if cat in skip_cats:
+            continue
+
+        t_col = f"T_{cat}"
+        if t_col not in df.columns:
+            continue
+
+        treated_mask = df[t_col] == 1
+        control_mask = df[t_col] == 0
+        n_treated = int(treated_mask.sum())
+        n_control = int(control_mask.sum())
+
+        if n_treated == 0 or n_control == 0:
+            continue
+
+        stats_list = []
+        for var_name, col_name in variables.items():
+            if col_name not in df.columns:
+                continue
+
+            t_vals = df.loc[treated_mask, col_name].dropna().values
+            c_vals = df.loc[control_mask, col_name].dropna().values
+
+            if len(t_vals) == 0 or len(c_vals) == 0:
+                continue
+
+            t_mean = float(np.mean(t_vals))
+            c_mean = float(np.mean(c_vals))
+
+            # For percentage variables, display as percentage
+            if var_name == "Discount Applied (%)":
+                t_mean = round(t_mean * 100, 2)
+                c_mean = round(c_mean * 100, 2)
+
+            std_diff = _cohens_d(t_vals.astype(float), c_vals.astype(float))
+
+            stats_list.append(DescriptiveStats(
+                variable=var_name,
+                treated_mean=round(t_mean, 4),
+                control_mean=round(c_mean, 4),
+                std_diff=round(abs(std_diff), 4),
+            ))
+
+        result[cat] = ChannelDescriptiveStats(
+            channel_name=cat,
+            n_treated=n_treated,
+            n_control=n_control,
+            stats=stats_list,
+        )
+        logger.info(f"  {cat}: {len(stats_list)} descriptive variables computed")
+
+    return result
