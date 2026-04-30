@@ -2,7 +2,8 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.modeling_schema import PipelineResult
-from app.services.dataset_service import get_session
+from app.services.dataset_service import session_store
+from app.utils.error_handling import require_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -14,9 +15,7 @@ async def get_results(session_id: str):
     Retrieve pipeline results for the dashboard.
     Must have run the pipeline first via POST /modeling/run-pipeline.
     """
-    session = get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = require_session(session_store, session_id)
 
     result = session.get("result")
     if not result:
@@ -31,9 +30,7 @@ async def get_results(session_id: str):
 @router.get("/status/{session_id}")
 async def get_status(session_id: str):
     """Check the current status of a session."""
-    session = get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = require_session(session_store, session_id)
 
     return {
         "session_id": session_id,

@@ -21,6 +21,9 @@ from sklearn.metrics import roc_auc_score
 
 logger = logging.getLogger(__name__)
 
+# NumPy 2.0+ compatibility: np.trapz was renamed to np.trapezoid
+_trapz = getattr(np, 'trapezoid', None) or getattr(np, 'trapz')
+
 
 def _validate_inputs(ite: np.ndarray, T: np.ndarray, Y: np.ndarray) -> bool:
     """Check that inputs are valid for metric computation."""
@@ -100,7 +103,7 @@ def compute_uplift_auc(
     fractions, uplift_values = compute_uplift_curve(ite, T, Y)
 
     # Normalize: AUC of the model curve minus AUC of random targeting
-    model_auc = float(np.trapz(uplift_values, fractions))
+    model_auc = float(_trapz(uplift_values, fractions))
     # Random targeting: constant uplift = overall ATE across all fractions
     overall_ate = np.mean(Y[T == 1]) - np.mean(Y[T == 0]) if np.sum(T == 0) > 0 else 0
     random_auc = overall_ate  # integral of constant over [0,1]
@@ -185,7 +188,7 @@ def compute_qini_auc(
         return None
 
     fractions, qini_values = compute_qini_curve(ite, T, Y)
-    return round(float(np.trapz(qini_values, fractions)), 6)
+    return round(float(_trapz(qini_values, fractions)), 6)
 
 
 # ── Precision@K and Recall@K ────────────────────────────────────────

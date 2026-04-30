@@ -2,7 +2,9 @@ import logging
 import uuid
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+
+from app.utils.progress import PipelineTracker
+from app.utils.error_handling import safe_run
 
 from app.configs import settings
 from app.schemas.modeling_schema import (
@@ -263,168 +265,144 @@ def run_pipeline(
         config = ModelingConfig()
 
     session_id = str(uuid.uuid4())
-    logger.info(f"=== Pipeline started [session={session_id[:8]}] ===")
 
-    # ── Master progress bar for pipeline stages ────────────────────
-    stages = tqdm(
-        total=7,
-        desc="🔬 Causal Pipeline",
-        bar_format="{l_bar}{bar:30}{r_bar}",
-        colour="cyan",
-    )
+    with PipelineTracker("🔬 IMC CAUSAL PIPELINE", total_steps=7) as tracker:
 
-    # ── Step 1: Merge ──────────────────────────────────────────────
-    stages.set_description("📦 Step 1/7: Merging datasets")
-    merged = merge_datasets(
-        customers_df, transactions_df, campaigns_df,
-        imc_mapping, col_mapping,
-        outcome_window_days=config.outcome_window_days,
-    )
-    imc_categories = sorted(set(imc_mapping.values()))
-    stages.update(1)
+        # ── Step 1: Merge ──────────────────────────────────────────
+        with tracker.step(1, "Merging datasets") as s:
+            merged = merge_datasets(
+                customers_df, transactions_df, campaigns_df,
+                imc_mapping, col_mapping,
+                outcome_window_days=config.outcome_window_days,
+            )
+            imc_categories = sorted(set(imc_mapping.values()))
+            s.detail(f"{len(merged):,} rows, {len(imc_categories)} channels")
 
-    # ── Step 2: Treatment balance ──────────────────────────────────
-    stages.set_description("⚖️  Step 2/7: Checking treatment balance")
-    balance_results = check_treatment_balance(
-        merged, imc_categories, all_possible_categories=ALL_IMC_CATEGORIES
-    )
-    balance_lookup = {br.imc_category: br.status for br in balance_results}
-    stages.update(1)
+        # ── Step 2: Treatment balance ──────────────────────────────
+        with tracker.step(2, "Checking treatment balance") as s:
+            balance_results = check_treatment_balance(
+                merged, imc_categories, all_possible_categories=ALL_IMC_CATEGORIES
+            )
+            balance_lookup = {br.imc_category: br.status for br in balance_results}
+            viable = sum(1 for br in balance_results if br.status in ("good", "warning"))
+            s.detail(f"{viable}/{len(imc_categories)} viable")
 
-    # ── Step 3: Temporal alignment ─────────────────────────────────
-    stages.set_description("🕐 Step 3/7: Temporal alignment (RFM)")
-    aligned = apply_temporal_alignment(merged, campaigns_df, col_mapping)
-    stages.update(1)
+        # ── Step 3: Temporal alignment ─────────────────────────────
+        with tracker.step(3, "Temporal alignment (RFM)"):
+            aligned = apply_temporal_alignment(merged, campaigns_df, col_mapping)
 
-    # ── Step 4: Feature engineering ────────────────────────────────
-    stages.set_description("🔧 Step 4/7: Engineering features")
-    channel_data, confounder_cols, scaler, label_encoders = engineer_features(
-        aligned, imc_categories, col_mapping, balance_results=balance_results
-    )
-    segment_cols = ["gender", "state", "preferred_channel"]
-    stages.update(1)
+        # ── Step 4: Feature engineering ────────────────────────────
+        with tracker.step(4, "Engineering features") as s:
+            channel_data, confounder_cols, scaler, label_encoders = engineer_features(
+                aligned, imc_categories, col_mapping, balance_results=balance_results
+            )
+            segment_cols = ["gender", "state", "preferred_channel"]
+            s.detail(f"{len(confounder_cols)} confounders, {len(channel_data)} channels")
 
-    # ── Step 5 & 6: Run estimators per channel ─────────────────────
-    stages.set_description("🧠 Step 5/7: Running causal estimators")
-    estimators = get_all_estimators(config.models_to_run)
+        # ── Step 5: Run estimators per channel ─────────────────────
+        with tracker.step(5, "Running causal estimators") as s:
+            estimators = get_all_estimators(config.models_to_run)
+            n_total = len(channel_data) * len(estimators)
+            s.detail(f"{n_total} model fits")
 
-    def _run_channel(channel_name: str, X, T, Y):
-        """Run all estimators for a single channel. Thread-safe."""
-        logger.info(f"\n  === Channel: {channel_name} ===")
-        model_results: dict[str, ModelResult] = {}
+        def _run_channel(channel_name: str, X, T, Y):
+            """Run all estimators for a single channel."""
+            model_results: dict[str, ModelResult] = {}
 
-        for estimator in tqdm(
-            estimators,
-            desc=f"  📊 {channel_name}",
-            bar_format="  {l_bar}{bar:25}{r_bar}",
-            leave=False,
-        ):
-            try:
-                result = estimator.run(X, T, Y, feature_names=confounder_cols)
+            for estimator in estimators:
+                fallback = ModelResult(model_name=estimator.name, ate=0.0, att=0.0)
+                result = safe_run(
+                    estimator.run, X, T, Y, feature_names=confounder_cols,
+                    fallback=fallback,
+                    error_msg=f"{channel_name}/{estimator.name}",
+                )
 
                 # Populate CATE by segment for the best causal model
-                if estimator.name == "causal_forest" and result.ite_array:
+                if result.ate != 0.0 and estimator.name == "causal_forest" and result.ite_array:
                     full_ite = np.array(result.ite_array)
                     result.cate_by_segment = _compute_cate_by_segment(
                         full_ite, aligned.head(len(full_ite)), segment_cols
                     )
 
                 model_results[estimator.name] = result
-                logger.info(f"    {estimator.name}: ATE={result.ate:.4f}")
+                pbar.set_postfix_str(f"{channel_name} → {estimator.name} ✓ ATE={result.ate:.2f}")
+                pbar.update(1)
 
+            # Build channel-level aggregation
+            balance_status = balance_lookup.get(channel_name, "good")
+            channel_result = _build_channel_result(
+                channel_name, model_results, balance_status
+            )
+            cross = _build_cross_model_comparison(model_results)
+            avc = _build_associative_vs_causal(
+                channel_name, model_results, channel_result.consensus_ate
+            )
+
+            persuadables_pct = 0.0
+            best_result = model_results.get(channel_result.best_model)
+            if best_result and best_result.uplift_segments:
+                persuadables_pct = best_result.uplift_segments.persuadables
+
+            summary = ChannelSummary(
+                channel=channel_name,
+                consensus_ate=channel_result.consensus_ate,
+                best_model=channel_result.best_model,
+                agreement_score=channel_result.agreement_score,
+                persuadables_pct=round(persuadables_pct, 4),
+                confidence_level=channel_result.confidence_level,
+            )
+            return channel_name, channel_result, cross, avc, summary
+
+        channel_results: dict[str, ChannelResult] = {}
+        cross_model_comparisons: dict[str, CrossModelComparison] = {}
+        assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
+        channel_summaries: list[ChannelSummary] = []
+
+        pbar = tracker.model_loop(total=n_total)
+        for ch, (X, T, Y) in channel_data.items():
+            try:
+                name, ch_result, cross, avc, summary = _run_channel(ch, X, T, Y)
+                channel_results[name] = ch_result
+                cross_model_comparisons[name] = cross
+                assoc_vs_causal[name] = avc
+                channel_summaries.append(summary)
             except Exception as e:
-                logger.error(f"    {estimator.name} FAILED: {e}")
-                model_results[estimator.name] = ModelResult(
-                    model_name=estimator.name,
-                    ate=0.0,
-                    att=0.0,
-                )
+                logger.error(f"Channel '{ch}' failed entirely: {e}")
+        pbar.close()
 
-        # Build channel-level aggregation
-        balance_status = balance_lookup.get(channel_name, "good")
-        channel_result = _build_channel_result(
-            channel_name, model_results, balance_status
-        )
-        cross = _build_cross_model_comparison(model_results)
-        avc = _build_associative_vs_causal(
-            channel_name, model_results, channel_result.consensus_ate
-        )
+        # ── Step 6: Build channel ranking ──────────────────────────
+        with tracker.step(6, "Ranking channels"):
+            ranked = sorted(
+                channel_summaries,
+                key=lambda s: s.consensus_ate,
+                reverse=True,
+            )
+            channel_ranking = [
+                {
+                    "rank": i + 1,
+                    "channel": s.channel,
+                    "consensus_ate": s.consensus_ate,
+                    "confidence_level": s.confidence_level,
+                }
+                for i, s in enumerate(ranked)
+            ]
 
-        persuadables_pct = 0.0
-        best_result = model_results.get(channel_result.best_model)
-        if best_result and best_result.uplift_segments:
-            persuadables_pct = best_result.uplift_segments.persuadables
+        # ── Step 7: Package PipelineResult ─────────────────────────
+        with tracker.step(7, "Packaging results"):
+            result = PipelineResult(
+                session_id=session_id,
+                channel_ranking=channel_ranking,
+                campaign_type_count=len(set(imc_mapping.keys())),
+                channel_data=channel_results,
+                balance_results=balance_results,
+                cross_model_comparison=cross_model_comparisons,
+                associative_vs_causal=assoc_vs_causal,
+                channel_summary=channel_summaries,
+                imc_mapping=imc_mapping,
+            )
 
-        summary = ChannelSummary(
-            channel=channel_name,
-            consensus_ate=channel_result.consensus_ate,
-            best_model=channel_result.best_model,
-            agreement_score=channel_result.agreement_score,
-            persuadables_pct=round(persuadables_pct, 4),
-            confidence_level=channel_result.confidence_level,
-        )
-        return channel_name, channel_result, cross, avc, summary
-
-    # Run channels sequentially (tqdm needs sequential for clean rendering)
-    channel_results: dict[str, ChannelResult] = {}
-    cross_model_comparisons: dict[str, CrossModelComparison] = {}
-    assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
-    channel_summaries: list[ChannelSummary] = []
-
-    for ch, (X, T, Y) in tqdm(
-        channel_data.items(),
-        desc="🔄 Channels",
-        bar_format="{l_bar}{bar:30}{r_bar}",
-        colour="green",
-    ):
-        try:
-            name, ch_result, cross, avc, summary = _run_channel(ch, X, T, Y)
-            channel_results[name] = ch_result
-            cross_model_comparisons[name] = cross
-            assoc_vs_causal[name] = avc
-            channel_summaries.append(summary)
-        except Exception as e:
-            logger.error(f"  Channel '{ch}' failed entirely: {e}")
-
-    stages.update(1)  # Step 5 done
-
-    # ── Step 6: Build channel ranking ──────────────────────────────
-    stages.set_description("📈 Step 6/7: Ranking channels")
-    ranked = sorted(
-        channel_summaries,
-        key=lambda s: s.consensus_ate,
-        reverse=True,
-    )
-    channel_ranking = [
-        {
-            "rank": i + 1,
-            "channel": s.channel,
-            "consensus_ate": s.consensus_ate,
-            "confidence_level": s.confidence_level,
-        }
-        for i, s in enumerate(ranked)
-    ]
-    stages.update(1)
-
-    # ── Step 7: Package PipelineResult ─────────────────────────────
-    stages.set_description("📋 Step 7/7: Packaging results")
-    result = PipelineResult(
-        session_id=session_id,
-        channel_ranking=channel_ranking,
-        campaign_type_count=len(set(imc_mapping.keys())),
-        channel_data=channel_results,
-        balance_results=balance_results,
-        cross_model_comparison=cross_model_comparisons,
-        associative_vs_causal=assoc_vs_causal,
-        channel_summary=channel_summaries,
-        imc_mapping=imc_mapping,
-    )
-    stages.update(1)
-    stages.close()
-
-    logger.info(f"=== Pipeline complete [session={session_id[:8]}] ===")
-    logger.info(f"  Channels analysed: {list(channel_results.keys())}")
-    logger.info(f"  Top channel: {channel_ranking[0]['channel'] if channel_ranking else 'none'}")
+        top = channel_ranking[0]['channel'] if channel_ranking else 'none'
+        tracker.complete(f"Pipeline complete — {len(channel_results)} channels | 🏆 Top: {top}")
 
     return result
 
@@ -460,103 +438,101 @@ def run_evaluation(
         config = ModelingConfig()
 
     session_id = str(uuid.uuid4())
-    logger.info(f"=== Evaluation started [session={session_id[:8]}] ===")
 
-    # Steps 1-4: same as run_pipeline
-    merged = merge_datasets(
-        customers_df, transactions_df, campaigns_df,
-        imc_mapping, col_mapping,
-        outcome_window_days=config.outcome_window_days,
-    )
-    imc_categories = sorted(set(imc_mapping.values()))
-    balance_results = check_treatment_balance(
-        merged, imc_categories, all_possible_categories=ALL_IMC_CATEGORIES
-    )
-    aligned = apply_temporal_alignment(merged, campaigns_df, col_mapping)
+    with PipelineTracker("📊 IMC EVALUATION PIPELINE", total_steps=5) as tracker:
 
-    # Descriptive statistics (before feature encoding)
-    logger.info("Computing descriptive statistics...")
-    desc_stats = compute_descriptive_statistics(
-        aligned, imc_categories, col_mapping, balance_results
-    )
+        # ── Step 1: Merge ──────────────────────────────────────────
+        with tracker.step(1, "Merging datasets") as s:
+            merged = merge_datasets(
+                customers_df, transactions_df, campaigns_df,
+                imc_mapping, col_mapping,
+                outcome_window_days=config.outcome_window_days,
+            )
+            imc_categories = sorted(set(imc_mapping.values()))
+            s.detail(f"{len(merged):,} rows")
 
-    channel_data, confounder_cols, _, _ = engineer_features(
-        aligned, imc_categories, col_mapping, balance_results=balance_results
-    )
+        # ── Step 2: Balance + alignment ────────────────────────────
+        with tracker.step(2, "Balance + temporal alignment"):
+            balance_results = check_treatment_balance(
+                merged, imc_categories, all_possible_categories=ALL_IMC_CATEGORIES
+            )
+            aligned = apply_temporal_alignment(merged, campaigns_df, col_mapping)
 
-    # Step 5: Run estimators + compute metrics
-    logger.info("Running estimators for evaluation...")
-    estimators = get_all_estimators(config.models_to_run)
-    channel_evals = {}
+        # ── Step 3: Descriptive statistics ─────────────────────────
+        with tracker.step(3, "Descriptive statistics") as s:
+            desc_stats = compute_descriptive_statistics(
+                aligned, imc_categories, col_mapping, balance_results
+            )
+            s.detail(f"{len(desc_stats)} channels")
 
-    for ch, (X, T, Y) in channel_data.items():
-        logger.info(f"  Evaluating channel: {ch}")
-        model_evals = {}
+        # ── Step 4: Feature engineering ────────────────────────────
+        with tracker.step(4, "Engineering features") as s:
+            channel_data, confounder_cols, _, _ = engineer_features(
+                aligned, imc_categories, col_mapping, balance_results=balance_results
+            )
+            s.detail(f"{len(channel_data)} channels")
 
-        for estimator in estimators:
-            try:
-                logger.info(f"    {estimator.name}...")
-                # Fit and get ITEs
-                result = estimator.run(X, T, Y, feature_names=confounder_cols)
+        # ── Step 5: Fit models + compute metrics ──────────────────
+        with tracker.step(5, "Fitting models + computing metrics") as s:
+            estimators = get_all_estimators(config.models_to_run)
+            n_total = len(channel_data) * len(estimators)
+            s.detail(f"{n_total} evaluations")
+
+        channel_evals = {}
+        pbar = tracker.model_loop(total=n_total, colour="magenta")
+
+        for ch, (X, T, Y) in channel_data.items():
+            model_evals = {}
+
+            for estimator in estimators:
+                fallback_result = ModelResult(model_name=estimator.name, ate=0.0, att=0.0)
+                result = safe_run(
+                    estimator.run, X, T, Y, feature_names=confounder_cols,
+                    fallback=fallback_result,
+                    error_msg=f"{ch}/{estimator.name}",
+                )
+
                 ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
-
-                # Pad/trim ITE to match T length (ite_array is capped at 500)
                 if len(ite) < len(T):
                     full_ite = np.full(len(T), np.mean(ite))
                     full_ite[:len(ite)] = ite
                     ite = full_ite
 
-                # Extract propensity scores where available
                 propensity = None
-                if estimator.name == "dr_learner":
-                    try:
-                        propensity = estimator._last_propensity
-                    except AttributeError:
-                        pass
-                elif estimator.name == "causal_forest":
-                    try:
-                        propensity = estimator._last_propensity
-                    except AttributeError:
-                        pass
+                if estimator.name in ("dr_learner", "causal_forest"):
+                    propensity = getattr(estimator, "_last_propensity", None)
 
-                # Compute all metrics
                 metrics = compute_all_metrics(ite, T, Y, propensity, k=0.10)
                 model_evals[estimator.name] = ModelEvaluationResult(
                     model_name=estimator.name,
                     metrics=EvaluationMetrics(**metrics),
                 )
-                logger.info(
-                    f"    {estimator.name}: uplift_auc={metrics['uplift_auc']}, "
-                    f"qini_auc={metrics['qini_auc']}"
-                )
-            except Exception as e:
-                logger.error(f"    {estimator.name} evaluation failed: {e}")
-                model_evals[estimator.name] = ModelEvaluationResult(
-                    model_name=estimator.name,
-                    metrics=EvaluationMetrics(),
-                )
+                pbar.set_postfix_str(f"{ch} → {estimator.name} ✓")
+                pbar.update(1)
 
-        channel_evals[ch] = ChannelEvaluationResult(
-            channel_name=ch,
-            model_evaluations=model_evals,
-        )
+            channel_evals[ch] = ChannelEvaluationResult(
+                channel_name=ch,
+                model_evaluations=model_evals,
+            )
 
-    # Build flattened performance summary table
-    summary_table = []
-    for ch, ch_eval in channel_evals.items():
-        for model_name, model_eval in ch_eval.model_evaluations.items():
-            m = model_eval.metrics
-            summary_table.append({
-                "channel": ch,
-                "model": model_name,
-                "uplift_auc": m.uplift_auc,
-                "qini_auc": m.qini_auc,
-                "precision_at_10pct": m.precision_at_k,
-                "recall_at_10pct": m.recall_at_k,
-                "base_classifier_auc": m.base_classifier_auc,
-            })
+        pbar.close()
 
-    logger.info(f"=== Evaluation complete [session={session_id[:8]}] ===")
+        # Build flattened performance summary table
+        summary_table = []
+        for ch, ch_eval in channel_evals.items():
+            for model_name, model_eval in ch_eval.model_evaluations.items():
+                m = model_eval.metrics
+                summary_table.append({
+                    "channel": ch,
+                    "model": model_name,
+                    "uplift_auc": m.uplift_auc,
+                    "qini_auc": m.qini_auc,
+                    "precision_at_10pct": m.precision_at_k,
+                    "recall_at_10pct": m.recall_at_k,
+                    "base_classifier_auc": m.base_classifier_auc,
+                })
+
+        tracker.complete(f"Evaluation complete — {len(channel_evals)} channels × {len(estimators)} models")
 
     return EvaluationResponse(
         session_id=session_id,
@@ -564,3 +540,4 @@ def run_evaluation(
         descriptive_statistics=desc_stats,
         model_performance_summary=summary_table,
     )
+
