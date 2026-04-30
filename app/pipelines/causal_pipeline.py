@@ -2,7 +2,7 @@ import logging
 import uuid
 import numpy as np
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 from app.configs import settings
 from app.schemas.modeling_schema import (
@@ -265,42 +265,47 @@ def run_pipeline(
     session_id = str(uuid.uuid4())
     logger.info(f"=== Pipeline started [session={session_id[:8]}] ===")
 
+    # ── Master progress bar for pipeline stages ────────────────────
+    stages = tqdm(
+        total=7,
+        desc="🔬 Causal Pipeline",
+        bar_format="{l_bar}{bar:30}{r_bar}",
+        colour="cyan",
+    )
+
     # ── Step 1: Merge ──────────────────────────────────────────────
-    logger.info("Step 1: Merging datasets...")
+    stages.set_description("📦 Step 1/7: Merging datasets")
     merged = merge_datasets(
         customers_df, transactions_df, campaigns_df,
         imc_mapping, col_mapping,
         outcome_window_days=config.outcome_window_days,
     )
-
-    # Identify which IMC categories were actually mapped
     imc_categories = sorted(set(imc_mapping.values()))
-    logger.info(f"  IMC categories found: {imc_categories}")
+    stages.update(1)
 
     # ── Step 2: Treatment balance ──────────────────────────────────
-    logger.info("Step 2: Checking treatment balance...")
+    stages.set_description("⚖️  Step 2/7: Checking treatment balance")
     balance_results = check_treatment_balance(
         merged, imc_categories, all_possible_categories=ALL_IMC_CATEGORIES
     )
-
-    # Build a lookup for balance status per category
     balance_lookup = {br.imc_category: br.status for br in balance_results}
+    stages.update(1)
 
     # ── Step 3: Temporal alignment ─────────────────────────────────
-    logger.info("Step 3: Applying temporal alignment...")
+    stages.set_description("🕐 Step 3/7: Temporal alignment (RFM)")
     aligned = apply_temporal_alignment(merged, campaigns_df, col_mapping)
+    stages.update(1)
 
     # ── Step 4: Feature engineering ────────────────────────────────
-    logger.info("Step 4: Engineering features...")
+    stages.set_description("🔧 Step 4/7: Engineering features")
     channel_data, confounder_cols, scaler, label_encoders = engineer_features(
         aligned, imc_categories, col_mapping, balance_results=balance_results
     )
-
-    # Columns to use for CATE subgroup analysis
     segment_cols = ["gender", "state", "preferred_channel"]
+    stages.update(1)
 
-    # ── Step 5 & 6: Run estimators per channel (parallel) ──────────
-    logger.info("Step 5: Running estimators...")
+    # ── Step 5 & 6: Run estimators per channel ─────────────────────
+    stages.set_description("🧠 Step 5/7: Running causal estimators")
     estimators = get_all_estimators(config.models_to_run)
 
     def _run_channel(channel_name: str, X, T, Y):
@@ -308,8 +313,12 @@ def run_pipeline(
         logger.info(f"\n  === Channel: {channel_name} ===")
         model_results: dict[str, ModelResult] = {}
 
-        for estimator in estimators:
-            logger.info(f"    Running {estimator.name}...")
+        for estimator in tqdm(
+            estimators,
+            desc=f"  📊 {channel_name}",
+            bar_format="  {l_bar}{bar:25}{r_bar}",
+            leave=False,
+        ):
             try:
                 result = estimator.run(X, T, Y, feature_names=confounder_cols)
 
@@ -356,34 +365,31 @@ def run_pipeline(
         )
         return channel_name, channel_result, cross, avc, summary
 
-    # Run channels in parallel (up to 3 workers)
+    # Run channels sequentially (tqdm needs sequential for clean rendering)
     channel_results: dict[str, ChannelResult] = {}
     cross_model_comparisons: dict[str, CrossModelComparison] = {}
     assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
     channel_summaries: list[ChannelSummary] = []
 
-    n_channels = len(channel_data)
-    max_workers = min(n_channels, 3)
-    logger.info(f"  Running {n_channels} channels with {max_workers} parallel workers")
+    for ch, (X, T, Y) in tqdm(
+        channel_data.items(),
+        desc="🔄 Channels",
+        bar_format="{l_bar}{bar:30}{r_bar}",
+        colour="green",
+    ):
+        try:
+            name, ch_result, cross, avc, summary = _run_channel(ch, X, T, Y)
+            channel_results[name] = ch_result
+            cross_model_comparisons[name] = cross
+            assoc_vs_causal[name] = avc
+            channel_summaries.append(summary)
+        except Exception as e:
+            logger.error(f"  Channel '{ch}' failed entirely: {e}")
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_run_channel, ch, X, T, Y): ch
-            for ch, (X, T, Y) in channel_data.items()
-        }
-        for future in as_completed(futures):
-            ch_name = futures[future]
-            try:
-                name, ch_result, cross, avc, summary = future.result()
-                channel_results[name] = ch_result
-                cross_model_comparisons[name] = cross
-                assoc_vs_causal[name] = avc
-                channel_summaries.append(summary)
-            except Exception as e:
-                logger.error(f"  Channel '{ch_name}' failed entirely: {e}")
+    stages.update(1)  # Step 5 done
 
-    # ── Step 7: Build channel ranking ──────────────────────────────
-    # Rank channels by consensus ATE (descending)
+    # ── Step 6: Build channel ranking ──────────────────────────────
+    stages.set_description("📈 Step 6/7: Ranking channels")
     ranked = sorted(
         channel_summaries,
         key=lambda s: s.consensus_ate,
@@ -398,9 +404,10 @@ def run_pipeline(
         }
         for i, s in enumerate(ranked)
     ]
+    stages.update(1)
 
-    # ── Step 8: Package PipelineResult ─────────────────────────────
-    logger.info("\nStep 7: Packaging results...")
+    # ── Step 7: Package PipelineResult ─────────────────────────────
+    stages.set_description("📋 Step 7/7: Packaging results")
     result = PipelineResult(
         session_id=session_id,
         channel_ranking=channel_ranking,
@@ -412,6 +419,8 @@ def run_pipeline(
         channel_summary=channel_summaries,
         imc_mapping=imc_mapping,
     )
+    stages.update(1)
+    stages.close()
 
     logger.info(f"=== Pipeline complete [session={session_id[:8]}] ===")
     logger.info(f"  Channels analysed: {list(channel_results.keys())}")
