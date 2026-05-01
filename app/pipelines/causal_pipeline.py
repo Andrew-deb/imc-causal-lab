@@ -427,7 +427,7 @@ def run_evaluation(
 
     Returns a dict ready for EvaluationResponse serialisation.
     """
-    from app.causal.evaluation import compute_all_metrics
+    from app.causal.evaluation import compute_all_metrics, select_best_model
     from app.pipelines.data_processing import compute_descriptive_statistics
     from app.schemas.modeling_schema import (
         EvaluationMetrics, ModelEvaluationResult,
@@ -439,7 +439,7 @@ def run_evaluation(
 
     session_id = str(uuid.uuid4())
 
-    with PipelineTracker("📊 IMC EVALUATION PIPELINE", total_steps=5) as tracker:
+    with PipelineTracker("📊 IMC EVALUATION PIPELINE", total_steps=6) as tracker:
 
         # ── Step 1: Merge ──────────────────────────────────────────
         with tracker.step(1, "Merging datasets") as s:
@@ -479,6 +479,7 @@ def run_evaluation(
             s.detail(f"{n_total} evaluations")
 
         channel_evals = {}
+        best_model_per_channel = {}
         pbar = tracker.model_loop(total=n_total, colour="magenta")
 
         for ch, (X, T, Y) in channel_data.items():
@@ -515,22 +516,30 @@ def run_evaluation(
                 model_evaluations=model_evals,
             )
 
+            # Select best targeting model for this channel (by Uplift AUC)
+            best_model_per_channel[ch] = select_best_model(model_evals)
+
         pbar.close()
 
-        # Build flattened performance summary table
-        summary_table = []
-        for ch, ch_eval in channel_evals.items():
-            for model_name, model_eval in ch_eval.model_evaluations.items():
-                m = model_eval.metrics
-                summary_table.append({
-                    "channel": ch,
-                    "model": model_name,
-                    "uplift_auc": m.uplift_auc,
-                    "qini_auc": m.qini_auc,
-                    "precision_at_10pct": m.precision_at_k,
-                    "recall_at_10pct": m.recall_at_k,
-                    "base_classifier_auc": m.base_classifier_auc,
-                })
+        # ── Step 6: Best model selection + summary ─────────────────
+        with tracker.step(6, "Selecting best models + building summary") as s:
+            summary_table = []
+            for ch, ch_eval in channel_evals.items():
+                for model_name, model_eval in ch_eval.model_evaluations.items():
+                    m = model_eval.metrics
+                    summary_table.append({
+                        "channel": ch,
+                        "model": model_name,
+                        "uplift_auc": m.uplift_auc,
+                        "qini_auc": m.qini_auc,
+                        "precision_at_10pct": m.precision_at_k,
+                        "recall_at_10pct": m.recall_at_k,
+                        "base_classifier_auc": m.base_classifier_auc,
+                        "is_best": model_name == best_model_per_channel.get(ch),
+                    })
+
+            winners = ", ".join(f"{ch}: {m}" for ch, m in best_model_per_channel.items())
+            s.detail(f"🏆 {winners}")
 
         tracker.complete(f"Evaluation complete — {len(channel_evals)} channels × {len(estimators)} models")
 
@@ -539,5 +548,7 @@ def run_evaluation(
         channel_evaluations=channel_evals,
         descriptive_statistics=desc_stats,
         model_performance_summary=summary_table,
+        best_model_per_channel=best_model_per_channel,
     )
+
 

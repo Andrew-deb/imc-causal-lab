@@ -4,6 +4,12 @@ from typing import Optional
 
 # ── Evaluation Metrics (Marthalia Table 2) ──────────────────────────
 
+class CurveData(BaseModel):
+    """X-Y data for plotting uplift or Qini curves."""
+    fractions: list[float]   # x-axis: population fraction [0, 1]
+    values: list[float]      # y-axis: uplift or qini value at each fraction
+
+
 class EvaluationMetrics(BaseModel):
     """Per-model uplift evaluation metrics."""
     uplift_auc: Optional[float] = None
@@ -11,6 +17,9 @@ class EvaluationMetrics(BaseModel):
     precision_at_k: Optional[float] = None   # k=10%
     recall_at_k: Optional[float] = None      # k=10%
     base_classifier_auc: Optional[float] = None
+    # Curve data for plotting
+    uplift_curve: Optional[CurveData] = None
+    qini_curve: Optional[CurveData] = None
 
 
 class DescriptiveStats(BaseModel):
@@ -152,3 +161,5 @@ class EvaluationResponse(BaseModel):
     channel_evaluations: dict[str, ChannelEvaluationResult]
     descriptive_statistics: dict[str, ChannelDescriptiveStats]
     model_performance_summary: list[dict]  # flattened table for easy display
+    # Evaluation-driven best model (by Uplift AUC) per channel
+    best_model_per_channel: dict[str, str] = {}

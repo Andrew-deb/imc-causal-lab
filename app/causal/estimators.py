@@ -224,8 +224,13 @@ class DRLearnerEstimator(BaseEstimator):
         model.fit(Y, T, X=X)
 
         # Store propensity scores for evaluation metrics
+        # EconML's cross-fitting stores fold-level models, not a single model.
+        # Fit a standalone classifier to get full-data propensity P(T=1|X).
         try:
-            self._last_propensity = model.propensity_model_.predict_proba(X)[:, 1]
+            from sklearn.ensemble import GradientBoostingClassifier as _GBC
+            _prop_clf = _GBC(n_estimators=n_est, max_depth=4, random_state=42)
+            _prop_clf.fit(X, T)
+            self._last_propensity = _prop_clf.predict_proba(X)[:, 1]
         except Exception:
             self._last_propensity = None
 
@@ -293,8 +298,13 @@ class CausalForestEstimator(BaseEstimator):
         model.fit(Y, T, X=X)
 
         # Store propensity scores for evaluation metrics
+        # CausalForestDML.model_t_ doesn't exist after cross-fitting.
+        # Fit a standalone classifier to get full-data propensity P(T=1|X).
         try:
-            self._last_propensity = model.model_t_.predict(X).flatten()
+            from sklearn.ensemble import GradientBoostingClassifier as _GBC
+            _prop_clf = _GBC(n_estimators=n_est, max_depth=4, random_state=42)
+            _prop_clf.fit(X, T)
+            self._last_propensity = _prop_clf.predict_proba(X)[:, 1]
         except Exception:
             self._last_propensity = None
 

@@ -45,7 +45,7 @@ def compute_uplift_curve(
     ite: np.ndarray,
     T: np.ndarray,
     Y: np.ndarray,
-    n_bins: int = 100,
+    n_bins: int = 10,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the uplift curve.
@@ -120,7 +120,7 @@ def compute_qini_curve(
     ite: np.ndarray,
     T: np.ndarray,
     Y: np.ndarray,
-    n_bins: int = 100,
+    n_bins: int = 10,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the Qini curve (Radcliffe, 2007).
@@ -308,12 +308,79 @@ def compute_all_metrics(
     Compute all evaluation metrics at once.
 
     Returns a dict matching the EvaluationMetrics schema:
-      {uplift_auc, qini_auc, precision_at_k, recall_at_k, base_classifier_auc}
+      {uplift_auc, qini_auc, precision_at_k, recall_at_k,
+       base_classifier_auc, uplift_curve, qini_curve}
     """
+    # Compute curves (needed for both AUC and plotting)
+    uplift_curve_data = None
+    qini_curve_data = None
+    u_auc = None
+    q_auc = None
+
+    if _validate_inputs(ite, T, Y):
+        # Uplift curve + AUC
+        u_fracs, u_vals = compute_uplift_curve(ite, T, Y)
+        uplift_curve_data = {
+            "fractions": [round(float(f), 4) for f in u_fracs],
+            "values": [round(float(v), 4) for v in u_vals],
+        }
+        model_auc = float(_trapz(u_vals, u_fracs))
+        overall_ate = np.mean(Y[T == 1]) - np.mean(Y[T == 0]) if np.sum(T == 0) > 0 else 0
+        random_auc = overall_ate
+        if abs(random_auc) > 1e-10:
+            u_auc = round(float((model_auc - random_auc) / abs(random_auc)), 6)
+        else:
+            u_auc = round(float(model_auc), 6)
+
+        # Qini curve + AUC
+        q_fracs, q_vals = compute_qini_curve(ite, T, Y)
+        qini_curve_data = {
+            "fractions": [round(float(f), 4) for f in q_fracs],
+            "values": [round(float(v), 4) for v in q_vals],
+        }
+        q_auc = round(float(_trapz(q_vals, q_fracs)), 6)
+
     return {
-        "uplift_auc": compute_uplift_auc(ite, T, Y),
-        "qini_auc": compute_qini_auc(ite, T, Y),
+        "uplift_auc": u_auc,
+        "qini_auc": q_auc,
         "precision_at_k": compute_precision_at_k(ite, T, Y, k=k),
         "recall_at_k": compute_recall_at_k(ite, T, Y, k=k),
         "base_classifier_auc": compute_base_classifier_auc(T, propensity_scores),
+        "uplift_curve": uplift_curve_data,
+        "qini_curve": qini_curve_data,
     }
+
+
+# ── Best Model Selection (Evaluation-Driven) ────────────────────────
+
+def select_best_model(model_evaluations: dict) -> str:
+    """
+    Select the best targeting model based on evaluation metrics.
+
+    Selection criteria (in priority order):
+      1. Highest Uplift AUC (primary — measures ranking quality)
+      2. Highest Qini AUC (tiebreaker — measures incremental gain)
+
+    The logistic regression baseline is excluded from selection since
+    it serves as a reference point, not a candidate for deployment.
+
+    Returns:
+        Model name string (e.g. "causal_forest")
+    """
+    best_name = None
+    best_score = -float("inf")
+
+    for name, eval_result in model_evaluations.items():
+        if name == "logistic_regression":
+            continue  # Exclude baseline from best selection
+
+        m = eval_result.metrics
+        # Primary: Uplift AUC, weighted tiebreaker: Qini AUC
+        score = (m.uplift_auc or 0) + 0.1 * (m.qini_auc or 0)
+
+        if score > best_score:
+            best_score = score
+            best_name = name
+
+    return best_name or "causal_forest"
+
