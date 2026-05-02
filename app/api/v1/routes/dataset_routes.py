@@ -1,8 +1,8 @@
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File
 
 from app.schemas.dataset_schema import DatasetUploadResponse
-from app.services.dataset_service import parse_and_store_datasets, get_session, session_store
+from app.services.dataset_service import parse_and_store_datasets, get_session
 from app.utils.error_handling import handle_route_errors, require_session
 
 logger = logging.getLogger(__name__)
@@ -25,9 +25,10 @@ async def upload_datasets(
 
 
 @router.get("/columns/{session_id}")
+@handle_route_errors("Get columns", status_code=404)
 async def get_columns(session_id: str):
     """Retrieve column names for a previously uploaded session."""
-    session = require_session(session_store, session_id)
+    session = require_session(session_id)
 
     return {
         "session_id": session_id,

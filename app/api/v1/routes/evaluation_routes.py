@@ -1,10 +1,9 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.schemas.dataset_schema import ColumnMappingRequest
 from app.schemas.modeling_schema import ColumnMapping, EvaluationResponse
 from app.services.modeling_service import execute_evaluation
-from app.services.dataset_service import session_store
 from app.utils.error_handling import handle_route_errors, require_session, require_imc_mapping
 
 logger = logging.getLogger(__name__)
@@ -27,7 +26,7 @@ async def evaluate_models_endpoint(request: ColumnMappingRequest):
       - IMC mapping completed (POST /imc/map-campaigns)
       - Column mapping provided in this request
     """
-    session = require_session(session_store, request.session_id)
+    session = require_session(request.session_id)
     require_imc_mapping(session)
 
     col_mapping = ColumnMapping(

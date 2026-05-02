@@ -16,6 +16,8 @@ import traceback
 from typing import Callable, TypeVar, Any
 from fastapi import HTTPException
 
+from app.services.session_service import session_manager
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -111,7 +113,8 @@ def safe_run(
         return fallback
 
 
-def require_session(session_store: dict, session_id: str) -> dict:
+def require_session(session_id: str) -> dict:
+
     """
     Validate that a session exists and return it.
     Raises HTTPException(404) if not found.
@@ -119,7 +122,7 @@ def require_session(session_store: dict, session_id: str) -> dict:
     Usage (in route handlers):
         session = require_session(session_store, request.session_id)
     """
-    session = session_store.get(session_id)
+    session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(
             status_code=404,

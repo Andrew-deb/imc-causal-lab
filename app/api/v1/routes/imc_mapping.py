@@ -1,11 +1,10 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.schemas.imc_mapping import IMCMappingRequest, IMCMappingResponse
 from app.services.imc_mapping import map_capmpaign_types_to_imc
-from app.services.dataset_service import session_store
 from app.configs import settings, DEFAULT_IMC_MAPPING
-from app.utils.error_handling import handle_route_errors
+from app.utils.error_handling import handle_route_errors, require_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/imc", tags=["IMC Mapping"])
@@ -38,9 +37,9 @@ async def map_campaigns(request: IMCMappingRequest):
         result = await map_capmpaign_types_to_imc(request)
 
     # Store mapping in session if session exists
-    session = session_store.get(request.session_id)
+    session = require_session(request.session_id)
     if session:
-        session["imc_mapping"] = result.mapping
-        session["status"] = "mapped"
+        from app.services.session_service import session_manager
+        session_manager.update_session(request.session_id, imc_mapping=result.mapping, status="mapped")
 
     return result

@@ -2,7 +2,7 @@ import logging
 
 from app.schemas.modeling_schema import ColumnMapping, ModelingConfig, PipelineResult
 from app.pipelines.causal_pipeline import run_pipeline
-from app.services.dataset_service import session_store
+from app.services.session_service import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +18,14 @@ async def execute_pipeline(
     Retrieves stored DataFrames + IMC mapping from the session,
     calls run_pipeline(), stores the result back in the session.
     """
-    session = session_store.get(session_id)
+    session = session_manager.get_session(session_id)
     if not session:
         raise ValueError(f"Session {session_id} not found")
 
     if not session.get("imc_mapping"):
         raise ValueError("IMC mapping not set — call /map-campaigns first")
 
-    session["status"] = "running"
-    session["column_mapping"] = col_mapping
+    session_manager.update_session(session_id, status="running", column_mapping=col_mapping)
 
     try:
         result = run_pipeline(
@@ -40,14 +39,13 @@ async def execute_pipeline(
 
         # Override session_id to match the upload session
         result.session_id = session_id
-        session["result"] = result
-        session["status"] = "complete"
+        session_manager.update_session(session_id, result=result, status="complete")
 
         logger.info(f"Pipeline complete for session {session_id[:8]}")
         return result
 
     except Exception as e:
-        session["status"] = "error"
+        session_manager.update_session(session_id, status="error")
         logger.error(f"Pipeline failed for session {session_id[:8]}: {e}")
         raise
 
@@ -65,7 +63,7 @@ async def execute_evaluation(
     """
     from app.pipelines.causal_pipeline import run_evaluation
 
-    session = session_store.get(session_id)
+    session = session_manager.get_session(session_id)
     if not session:
         raise ValueError(f"Session {session_id} not found")
 
@@ -82,7 +80,7 @@ async def execute_evaluation(
             config=config,
         )
         result.session_id = session_id
-        session["evaluation_result"] = result
+        session_manager.update_session(session_id, evaluation_result=result)
         logger.info(f"Evaluation complete for session {session_id[:8]}")
         return result
 
