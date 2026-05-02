@@ -1,11 +1,25 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
 from app.api.v1.router import api_router
+from app.storage.mongo_client import close_client
+from app.configs import settings
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield  # App runs
+    # Cleanup on shutdown
+    if getattr(settings, "USE_MONGO", False):
+        close_client()
+
 
 app = FastAPI(
     title="IMC Causal Lab",
     description="Causal inference pipeline for Integrated Marketing Communications",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS — allow frontend dev server

@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Set to False when ready for production with real LLM mapping
     USE_DEMO_MAPPING: bool = True
 
+    # MongoDB Configuration
+    MONGODB_URI: str = ""           # Set in .env
+    MONGODB_DATABASE: str = "imc_causal_lab"
+    USE_MONGO: bool = False         # Toggle: False = in-memory, True = MongoDB 
+
     # Azure Storage Configurations
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     AZURE_CONTAINER_NAME: str = "imc-sessions"
