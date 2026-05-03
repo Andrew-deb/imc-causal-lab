@@ -10,12 +10,12 @@ class Settings(BaseSettings):
 
     # Model Configurations
     OUTCOME_WINDOW_DAYS: int = 30
-    CROSS_FITTING_FOLDS: int = 5
+    CROSS_FITTING_FOLDS: int = 3
     CAUSAL_FOREST_N_ESTIMATORS: int = 500      # reduced from 1000 for speed
 
     # Performance Tuning (adjustable for accuracy vs speed)
     FIRST_STAGE_N_ESTIMATORS: int = 100        # GBR/GBC trees in first-stage models
-    MAX_SUBSAMPLE_ROWS: int = 80000            # subsample threshold (0 = no limit)
+    MAX_SUBSAMPLE_ROWS: int = 30000            # subsample threshold (0 = no limit)
 
     # Treatment Balance Thresholds
     # GOOD: treated % between 20–80%

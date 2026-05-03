@@ -15,3 +15,5 @@ causalml
 pydantic-settings
 httpx
 pymongo[srv]
+pyarrow
+azure-storage-blob

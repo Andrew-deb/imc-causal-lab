@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import pandas as pd
 from io import StringIO
+import os
 
 from app.configs import settings
 from app.storage.mongo_client import get_sessions_collection
@@ -109,17 +110,30 @@ class MongoSessionManager:
         session_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
 
+        # Import our new Azure helpers
+        from app.storage.blob_client import upload_dataframe_as_parquet
+
+        # Generate unique blob names using a folder structure for cleaner organization
+        cust_blob = f"session_{session_id}/customers.parquet"
+        txn_blob = f"session_{session_id}/transactions.parquet"
+        camp_blob = f"session_{session_id}/campaigns.parquet"
+
+        # Upload the dataframes to Azure (they never touch the local disk!)
+        upload_dataframe_as_parquet(customers_df, cust_blob)
+        upload_dataframe_as_parquet(transactions_df, txn_blob)
+        upload_dataframe_as_parquet(campaigns_df, camp_blob)
+
         doc = {
             "session_id": session_id,
             "status": "uploaded",
             "created_at": now,
             "updated_at": now,
             "dataset_meta": dataset_meta,
-            # Store DataFrames as CSV strings (compact, reconstructable)
+            # Store just the blob names in MongoDB, NOT the massive datasets
             "datasets": {
-                "customers_csv": customers_df.to_csv(index=False),
-                "transactions_csv": transactions_df.to_csv(index=False),
-                "campaigns_csv": campaigns_df.to_csv(index=False),
+                "customers_blob": cust_blob,
+                "transactions_blob": txn_blob,
+                "campaigns_blob": camp_blob,
             },
             "imc_mapping": None,
             "column_mapping": None,
@@ -130,39 +144,53 @@ class MongoSessionManager:
         logger.info(f"Session created in MongoDB: {session_id[:8]}")
         return session_id
 
+
     def get_session(self, session_id):
         doc = self._col.find_one({"session_id": session_id}, {"_id": 0})
         if not doc:
             return None
 
-        # Reconstruct DataFrames from stored CSV strings
+        # Reconstruct DataFrames by downloading them from Azure
         datasets = doc.pop("datasets", {})
         if datasets:
-            doc["customers_df"] = pd.read_csv(StringIO(datasets["customers_csv"]))
-            doc["transactions_df"] = pd.read_csv(StringIO(datasets["transactions_csv"]))
-            doc["campaigns_df"] = pd.read_csv(StringIO(datasets["campaigns_csv"]))
+            from app.storage.blob_client import download_parquet_to_dataframe
+            
+            doc["customers_df"] = download_parquet_to_dataframe(datasets["customers_blob"])
+            doc["transactions_df"] = download_parquet_to_dataframe(datasets["transactions_blob"])
+            doc["campaigns_df"] = download_parquet_to_dataframe(datasets["campaigns_blob"])
 
         return doc
+
 
     def update_session(self, session_id, **fields):
         fields["updated_at"] = datetime.now(timezone.utc)
 
-        # If updating result/evaluation, convert Pydantic models to dicts
-        for key in ("result", "evaluation_result"):
-            if key in fields and hasattr(fields[key], "model_dump"):
-                fields[key] = fields[key].model_dump()
+        # FIX: Loop through ALL fields and convert any Pydantic models to dictionaries
+        for key, value in fields.items():
+            if hasattr(value, "model_dump"):
+                fields[key] = value.model_dump()
 
         self._col.update_one(
             {"session_id": session_id},
             {"$set": fields},
         )
 
+
     def delete_session(self, session_id):
+        # Clean up Azure blobs first to save space
+        doc = self._col.find_one({"session_id": session_id})
+        if doc and "datasets" in doc:
+            from app.storage.blob_client import delete_blob
+            for blob_name in doc["datasets"].values():
+                delete_blob(blob_name)
+
+        # Delete the metadata document from MongoDB
         result = self._col.delete_one({"session_id": session_id})
         if result.deleted_count > 0:
             logger.info(f"Session deleted from MongoDB: {session_id[:8]}")
             return True
         return False
+
 
     def list_sessions(self):
         docs = self._col.find(
