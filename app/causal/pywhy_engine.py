@@ -18,6 +18,7 @@ References:
 import json
 import logging
 import httpx
+import asyncio
 
 from app.configs import settings
 
@@ -41,35 +42,53 @@ async def _call_llm(prompt: str, system_msg: str = None) -> str:
             "Respond with ONLY valid JSON — no explanation, no markdown fences."
         )
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.LLM_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.DAG_DISCOVERY_MODEL,
-                "messages": [
-                    {"role": "system", "content": system_msg},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.0,
-            },
-        )
-        response.raise_for_status()
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.LLM_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": settings.DAG_DISCOVERY_MODEL,
+                        "messages": [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "temperature": 0.0,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
 
-    raw = response.json()["choices"][0]["message"]["content"].strip()
+                if "error" in data:
+                    error_msg = data["error"].get("message", str(data["error"]))
+                    raise RuntimeError(f"LLM API error: {error_msg}")
 
-    # Strip markdown code fences if the LLM wraps its response
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    if raw.endswith("```"):
-        raw = raw[:-3]
+                if "choices" not in data or not data["choices"]:
+                    logger.error(f"Unexpected LLM response structure: {json.dumps(data)[:500]}")
+                    raise RuntimeError(f"LLM returned no choices. Response: {json.dumps(data)[:200]}")
 
-    return raw.strip()
+                raw = data["choices"][0]["message"]["content"].strip()
+
+                # Strip markdown code fences if the LLM wraps its response
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1]
+                    if raw.startswith("json"):
+                        raw = raw[4:]
+                if raw.endswith("```"):
+                    raw = raw[:-3]
+
+                return raw.strip()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                logger.error(f"LLM call failed after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"LLM call attempt {attempt + 1} failed: {e}. Retrying in 2 seconds...")
+            await asyncio.sleep(2)
 
 
 # ── 1. Domain Expertise Discovery 

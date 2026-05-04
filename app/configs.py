@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "anthropic/claude-opus-4.7"
 
     # Causal Discovery (DAG) Configuration
-    DAG_DISCOVERY_MODEL: str = "openai/gpt-4o"  # Dedicated model for DAG discovery
+    DAG_DISCOVERY_MODEL: str = "openai/gpt-oss-120b:free"  # Dedicated model for DAG discovery
 
 
     # Model Configurations

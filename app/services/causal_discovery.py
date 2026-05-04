@@ -35,11 +35,9 @@ async def execute_dag_discovery(
         raise ValueError("IMC mapping not set — call /map-campaigns first")
 
     # ── Auto-detect treatment variable ───────────────────────────
-    # Use the first mapped IMC category as the treatment
+    # Use the semantic label "IMC_Exposure" to encompass all treatments for the DAG
     if not treatment_col:
-        imc_mapping = session["imc_mapping"]
-        categories = sorted(set(imc_mapping.values()))
-        treatment_col = f"T_{categories[0]}" if categories else "T_advertising"
+        treatment_col = "IMC_Exposure"
         logger.info(f"Auto-detected treatment: {treatment_col}")
 
     # ── Auto-detect outcome variable ─────────────────────────────
