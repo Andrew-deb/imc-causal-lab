@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "anthropic/claude-opus-4.7"
 
+    # Causal Discovery (DAG) Configuration
+    DAG_DISCOVERY_MODEL: str = "openai/gpt-4o"  # Dedicated model for DAG discovery
+
+
     # Model Configurations
     OUTCOME_WINDOW_DAYS: int = 30
     CROSS_FITTING_FOLDS: int = 3
