@@ -130,6 +130,7 @@ async def run_dag_discovery(
                     final_confounders, final_mediators
                 ),
                 reasoning=e.get("reasoning", ""),  # Pass through the LLM's causal justification
+                origin="llm", 
             )
             for e in raw_edges
             if e["source"] in set(all_vars) and e["target"] in set(all_vars)

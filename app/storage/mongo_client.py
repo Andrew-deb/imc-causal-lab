@@ -35,6 +35,11 @@ def get_sessions_collection():
     return get_database()["sessions"]
 
 
+def get_dags_collection():
+    """Get the causal_dags collection for the DAG library."""
+    return get_database()["causal_dags"]
+
+
 def close_client():
     """Close the MongoDB connection (call on app shutdown)."""
     global _client
