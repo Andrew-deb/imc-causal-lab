@@ -35,6 +35,30 @@ export interface ImcMapping {
   mapping: Record<string, string>;
 }
 
+export interface CausalEdge {
+  source: string;
+  target: string;
+  confidence: number;
+  relationship_type: "direct" | "confounder" | "mediator";
+  reasoning: string;
+}
+
+export interface VariableRoles {
+  confounders: string[];
+  mediators: string[];
+  colliders: string[];
+  instrumental_variables: string[];
+}
+
+export interface DAGDiscoveryResponse {
+  session_id: string;
+  treatment: string;
+  outcome: string;
+  domain_expertises: string[];
+  edges: CausalEdge[];
+  variable_roles: VariableRoles;
+}
+
 export interface CausalDiscoveryResult {
   dag_edges: { source: string; target: string }[];
   reasoning: string;
@@ -45,6 +69,26 @@ export interface CausalDiscoveryResult {
     mediators: string[];
     colliders: string[];
   };
+}
+
+export interface CurveData {
+  fractions: number[];
+  values: number[];
+}
+
+export interface EvaluationMetrics {
+  uplift_auc?: number;
+  qini_auc?: number;
+  precision_at_k?: number;
+  recall_at_k?: number;
+  base_classifier_auc?: number;
+  uplift_curve?: CurveData;
+  qini_curve?: CurveData;
+}
+
+export interface ModelEvaluationResult {
+  model_name: string;
+  metrics: EvaluationMetrics;
 }
 
 export interface SessionSummary {
@@ -86,7 +130,8 @@ export interface TreatmentBalanceResult {
   treated_count: number;
   control_count: number;
   treated_pct: number;
-  status: "good" | "weak" | "insufficient";
+  status: "good" | "warning" | "insufficient" | "not_in_dataset";
+  message: string;
 }
 
 export interface ChannelSummary {

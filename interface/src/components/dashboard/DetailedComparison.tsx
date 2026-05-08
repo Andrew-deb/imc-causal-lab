@@ -2,12 +2,34 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { BarChart3 } from "lucide-react";
 import { ModelComparisonTable } from "./ModelComparisonTable";
 import { ChannelSummaryTable } from "./ChannelSummaryTable";
+import { CurveVisualizer } from "./CurveVisualizer";
+import type { CurveData } from "@/lib/api";
 
 const CHANNELS = ["Advertising", "Promotion", "Direct Marketing", "Public Relations"];
+
+function makeCurve(peak: number): CurveData {
+  const fractions = Array.from({ length: 11 }, (_, i) => i / 10);
+  // Concave curve rising to `peak` at fraction=1
+  const values = fractions.map((f) => Number((peak * Math.pow(f, 0.7)).toFixed(4)));
+  return { fractions, values };
+}
+
+const MOCK_UPLIFT_CURVES: Record<string, CurveData> = {
+  Advertising: makeCurve(0.22),
+  Promotion: makeCurve(0.17),
+  "Direct Marketing": makeCurve(0.12),
+  "Public Relations": makeCurve(0.06),
+};
+
+const MOCK_QINI_CURVES: Record<string, CurveData> = {
+  Advertising: makeCurve(0.18),
+  Promotion: makeCurve(0.14),
+  "Direct Marketing": makeCurve(0.10),
+  "Public Relations": makeCurve(0.05),
+};
+
 
 const MOCK_ASSOC_VS_CAUSAL: Record<string, {
   estimated_effect: { associative: string; causal: string };
@@ -107,28 +129,47 @@ function AssociativeVsCausalTable() {
 }
 
 export default function DetailedComparison() {
+  const [curveChannel, setCurveChannel] = useState(CHANNELS[0]);
+
   return (
     <div className="space-y-6">
       <ModelComparisonTable />
       <AssociativeVsCausalTable />
       <ChannelSummaryTable />
 
-      {/* Qini Curve Placeholders */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Qini Curves</CardTitle>
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <CardTitle className="text-base">Uplift & Qini Curves</CardTitle>
+            <CardDescription className="text-sm mt-1">
+              Cumulative gain curves vs. random assignment baseline.
+            </CardDescription>
+          </div>
+          <Select value={curveChannel} onValueChange={setCurveChannel}>
+            <SelectTrigger className="w-44 h-8 text-xs shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CHANNELS.map((c) => (
+                <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {CHANNELS.map((ch) => (
-              <Card key={ch} className="border-dashed">
-                <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-3">
-                  <BarChart3 className="h-10 w-10" />
-                  <span className="text-sm font-medium">Qini Curve — {ch}</span>
-                  <span className="text-xs">Plot will load from blob storage</span>
-                </CardContent>
-              </Card>
-            ))}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <CurveVisualizer
+              title={`Uplift Curve — ${curveChannel}`}
+              curve={MOCK_UPLIFT_CURVES[curveChannel]}
+              modelName="Causal Forest"
+              yLabel="Cumulative uplift"
+            />
+            <CurveVisualizer
+              title={`Qini Curve — ${curveChannel}`}
+              curve={MOCK_QINI_CURVES[curveChannel]}
+              modelName="Causal Forest"
+              yLabel="Qini gain"
+            />
           </div>
         </CardContent>
       </Card>

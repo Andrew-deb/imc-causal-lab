@@ -1,97 +1,83 @@
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { CrossModelComparison } from "@/lib/api";
+import type { ModelEvaluationResult } from "@/lib/api";
 
-const MOCK_MODEL_COMPARISON: Record<string, CrossModelComparison> = {
-  Advertising: {
-    metrics: [
-      { metric: "ATE", t_learner: 0.22, dr_learner: 0.19, causal_forest: 0.20, consensus: 0.20 },
-      { metric: "ATT", t_learner: 0.19, dr_learner: 0.17, causal_forest: 0.18, consensus: 0.18 },
-      { metric: "ATE 95% CI", t_learner: "N/A", dr_learner: "[0.14, 0.24]", causal_forest: "[0.15, 0.25]", consensus: "—" },
-      { metric: "Qini Score", t_learner: 0.12, dr_learner: 0.15, causal_forest: 0.18, consensus: "—" },
-      { metric: "CATE Std Dev", t_learner: 0.08, dr_learner: 0.10, causal_forest: 0.14, consensus: "—" },
-    ],
+const MOCK_RESULTS: ModelEvaluationResult[] = [
+  {
+    model_name: "T-Learner",
+    metrics: {
+      uplift_auc: 0.62,
+      qini_auc: 0.58,
+      precision_at_k: 0.41,
+      recall_at_k: 0.27,
+      base_classifier_auc: 0.74,
+    },
   },
-  Promotion: {
-    metrics: [
-      { metric: "ATE", t_learner: 0.16, dr_learner: 0.14, causal_forest: 0.15, consensus: 0.15 },
-      { metric: "ATT", t_learner: 0.14, dr_learner: 0.13, causal_forest: 0.13, consensus: 0.13 },
-      { metric: "ATE 95% CI", t_learner: "N/A", dr_learner: "[0.09, 0.19]", causal_forest: "[0.10, 0.20]", consensus: "—" },
-      { metric: "Qini Score", t_learner: 0.09, dr_learner: 0.11, causal_forest: 0.13, consensus: "—" },
-      { metric: "CATE Std Dev", t_learner: 0.06, dr_learner: 0.08, causal_forest: 0.11, consensus: "—" },
-    ],
+  {
+    model_name: "DR-Learner",
+    metrics: {
+      uplift_auc: 0.68,
+      qini_auc: 0.64,
+      precision_at_k: 0.46,
+      recall_at_k: 0.31,
+      base_classifier_auc: 0.78,
+    },
   },
-  "Direct Marketing": {
-    metrics: [
-      { metric: "ATE", t_learner: 0.11, dr_learner: 0.09, causal_forest: 0.10, consensus: 0.10 },
-      { metric: "ATT", t_learner: 0.09, dr_learner: 0.08, causal_forest: 0.09, consensus: 0.09 },
-      { metric: "ATE 95% CI", t_learner: "N/A", dr_learner: "[0.05, 0.13]", causal_forest: "[0.06, 0.14]", consensus: "—" },
-      { metric: "Qini Score", t_learner: 0.07, dr_learner: 0.09, causal_forest: 0.10, consensus: "—" },
-      { metric: "CATE Std Dev", t_learner: 0.05, dr_learner: 0.06, causal_forest: 0.09, consensus: "—" },
-    ],
+  {
+    model_name: "Causal Forest",
+    metrics: {
+      uplift_auc: 0.71,
+      qini_auc: 0.67,
+      precision_at_k: 0.49,
+      recall_at_k: 0.34,
+      base_classifier_auc: 0.79,
+    },
   },
-  "Public Relations": {
-    metrics: [
-      { metric: "ATE", t_learner: 0.06, dr_learner: 0.04, causal_forest: 0.05, consensus: 0.05 },
-      { metric: "ATT", t_learner: 0.05, dr_learner: 0.04, causal_forest: 0.04, consensus: 0.04 },
-      { metric: "ATE 95% CI", t_learner: "N/A", dr_learner: "[0.01, 0.07]", causal_forest: "[0.02, 0.08]", consensus: "—" },
-      { metric: "Qini Score", t_learner: 0.04, dr_learner: 0.05, causal_forest: 0.06, consensus: "—" },
-      { metric: "CATE Std Dev", t_learner: 0.03, dr_learner: 0.04, causal_forest: 0.06, consensus: "—" },
-    ],
-  },
-};
+];
 
-function formatVal(v: number | string): string {
-  if (typeof v === "number") return v.toFixed(2);
-  return String(v);
+function fmt(v?: number): string {
+  if (v === undefined || v === null || Number.isNaN(v)) return "—";
+  return v.toFixed(3);
 }
 
-export function ModelComparisonTable({ data, channel }: { data?: Record<string, CrossModelComparison>; channel?: string }) {
-  const compData = data ?? MOCK_MODEL_COMPARISON;
-  const channels = Object.keys(compData);
-  const [selectedChannel, setSelectedChannel] = useState(channel ?? channels[0]);
-  const metrics = compData[selectedChannel]?.metrics ?? [];
+export function ModelComparisonTable({ results }: { results?: ModelEvaluationResult[] }) {
+  const data = results ?? MOCK_RESULTS;
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-base">Causal Model Comparison</CardTitle>
-        <Select value={selectedChannel} onValueChange={setSelectedChannel}>
-          <SelectTrigger className="w-44 h-8 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {channels.map((c) => (
-              <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <CardHeader>
+        <CardTitle className="text-base">Model Evaluation</CardTitle>
+        <CardDescription className="text-sm">
+          Academic metrics for uplift modeling — higher is better.
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Metric</TableHead>
-              <TableHead>T-Learner</TableHead>
-              <TableHead>DR-Learner</TableHead>
-              <TableHead>Causal Forest</TableHead>
-              <TableHead className="font-bold">Consensus</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {metrics.map((m) => (
-              <TableRow key={m.metric}>
-                <TableCell className="font-medium text-sm">{m.metric}</TableCell>
-                <TableCell className="font-mono text-sm">{formatVal(m.t_learner)}</TableCell>
-                <TableCell className="font-mono text-sm">{formatVal(m.dr_learner)}</TableCell>
-                <TableCell className="font-mono text-sm">{formatVal(m.causal_forest)}</TableCell>
-                <TableCell className="font-mono text-sm font-bold">{formatVal(m.consensus)}</TableCell>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Model</TableHead>
+                <TableHead>Uplift AUC</TableHead>
+                <TableHead>Qini AUC</TableHead>
+                <TableHead>Precision@10%</TableHead>
+                <TableHead>Recall@10%</TableHead>
+                <TableHead>Base Classifier AUC</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {data.map((r) => (
+                <TableRow key={r.model_name}>
+                  <TableCell className="font-medium text-sm">{r.model_name}</TableCell>
+                  <TableCell className="font-mono text-sm">{fmt(r.metrics.uplift_auc)}</TableCell>
+                  <TableCell className="font-mono text-sm">{fmt(r.metrics.qini_auc)}</TableCell>
+                  <TableCell className="font-mono text-sm">{fmt(r.metrics.precision_at_k)}</TableCell>
+                  <TableCell className="font-mono text-sm">{fmt(r.metrics.recall_at_k)}</TableCell>
+                  <TableCell className="font-mono text-sm">{fmt(r.metrics.base_classifier_auc)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </CardContent>
     </Card>
   );

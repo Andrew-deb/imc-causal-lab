@@ -1,16 +1,27 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, SessionResults } from "@/lib/api";
+import { api, SessionResults, TreatmentBalanceResult } from "@/lib/api";
 import { useSession } from "@/contexts/SessionContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import { TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap } from "lucide-react";
+import { TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap, ShieldAlert } from "lucide-react";
 import DetailedComparison from "@/components/dashboard/DetailedComparison";
+import { PageHeader } from "@/components/console/PageHeader";
+import { StatusPill } from "@/components/console/StatusPill";
+
+const MOCK_TREATMENT_BALANCE: TreatmentBalanceResult[] = [
+  { imc_category: "Advertising", treated_count: 120, control_count: 30, treated_pct: 0.8, status: "warning", message: "Skewed treatment/control split — confounding risk." },
+  { imc_category: "Promotion", treated_count: 200, control_count: 180, treated_pct: 0.53, status: "good", message: "Healthy balance." },
+  { imc_category: "Direct Marketing", treated_count: 15, control_count: 5, treated_pct: 0.75, status: "insufficient", message: "Too few control samples for reliable estimation." },
+  { imc_category: "Public Relations", treated_count: 90, control_count: 95, treated_pct: 0.49, status: "good", message: "Healthy balance." },
+];
+
 
 const MOCK_CHANNEL_DATA: Record<string, {
   ate: number;
@@ -364,53 +375,102 @@ export default function Dashboard() {
     placeholderData: MOCK_DATA,
   });
 
+  const { data: balance } = useQuery({
+    queryKey: ["treatment-balance", sessionId],
+    queryFn: () =>
+      sessionId
+        ? api.getTreatmentBalance(sessionId).catch(() => MOCK_TREATMENT_BALANCE)
+        : Promise.resolve(MOCK_TREATMENT_BALANCE),
+    placeholderData: MOCK_TREATMENT_BALANCE,
+  });
+
+  const flagged = (balance ?? []).filter(
+    (b) =>
+      (b.status === "warning" || b.status === "insufficient") &&
+      b.imc_category === selectedChannel
+  );
+
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="space-y-4">
+        <Skeleton className="h-12 rounded-md" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-lg" />
+            <Skeleton key={i} className="h-24 rounded-md" />
           ))}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Skeleton className="h-80 rounded-lg" />
-          <Skeleton className="h-80 rounded-lg" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Skeleton className="h-80 rounded-md" />
+          <Skeleton className="h-80 rounded-md" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {sessionId ? `Viewing results for session ${sessionId}` : "Showing sample data — run an analysis to see real results"}
-          </p>
-        </div>
-        <Select value={selectedChannel} onValueChange={setSelectedChannel}>
-          <SelectTrigger className="w-[200px] h-9 text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {CHANNELS.map((ch) => (
-              <SelectItem key={ch} value={ch} className="text-sm">
-                <ChannelLabel channel={ch} />
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Dashboard"
+        description={sessionId ? `Viewing results for session ${sessionId}` : "Showing sample data — run an analysis to see real results."}
+        breadcrumbs={[{ label: "Dashboard" }]}
+        icon={<TrendingUp className="h-5 w-5" />}
+        meta={
+          <>
+            <StatusPill tone={flagged.length ? "warning" : "success"}>
+              {flagged.length ? `${flagged.length} balance warnings` : "All channels healthy"}
+            </StatusPill>
+            <span>·</span>
+            <span>Channel: <span className="text-foreground font-medium">{selectedChannel}</span></span>
+          </>
+        }
+        actions={
+          <Select value={selectedChannel} onValueChange={setSelectedChannel}>
+            <SelectTrigger className="w-[200px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CHANNELS.map((ch) => (
+                <SelectItem key={ch} value={ch} className="text-sm">
+                  <ChannelLabel channel={ch} />
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        }
+      />
+
+      {flagged.length > 0 && (
+        <Alert variant="destructive">
+          <ShieldAlert className="h-4 w-4" />
+          <AlertTitle>Treatment balance warning</AlertTitle>
+          <AlertDescription>
+            <p className="mb-2 text-sm">
+              {flagged.length} channel{flagged.length > 1 ? "s have" : " has"} skewed
+              treatment/control distributions — confounding risk may affect causal estimates.
+            </p>
+            <ul className="space-y-1 text-xs">
+              {flagged.map((b) => (
+                <li key={b.imc_category} className="flex flex-wrap gap-x-2">
+                  <span className="font-semibold">{b.imc_category}</span>
+                  <span className="opacity-80">
+                    treated {b.treated_count} / control {b.control_count} (
+                    {(b.treated_pct * 100).toFixed(0)}%) — {b.status}
+                  </span>
+                  <span className="opacity-80">· {b.message}</span>
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs defaultValue={new URLSearchParams(window.location.search).get("tab") || "overview"}>
-        <TabsList>
+        <TabsList className="tabs-underline">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="comparison">Model Comparison</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-6">
+        <TabsContent value="overview" className="mt-5">
           <OverviewView
             selectedChannel={selectedChannel}
             onChannelChange={setSelectedChannel}
@@ -419,7 +479,7 @@ export default function Dashboard() {
           />
         </TabsContent>
 
-        <TabsContent value="comparison" className="mt-6">
+        <TabsContent value="comparison" className="mt-5">
           <DetailedComparison />
         </TabsContent>
       </Tabs>

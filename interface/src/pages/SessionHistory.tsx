@@ -10,11 +10,16 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-import { ReactFlow, Background, Controls } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { buildCausalGraph } from "@/lib/causal-graph";
-import { ArrowLeft, ExternalLink, ChevronRight, TrendingUp, Target, BarChart3, Award } from "lucide-react";
+import { ROLE_COLORS } from "@/lib/causal-graph";
+import { ArrowLeft, ExternalLink, ChevronRight, TrendingUp, Target, BarChart3, Award, Workflow, History } from "lucide-react";
+import { PageHeader } from "@/components/console/PageHeader";
+import { StatusPill } from "@/components/console/StatusPill";
 import SessionDatasetPreview, { StoredDataset } from "@/components/session/SessionDatasetPreview";
+import { useDAGLibrary, type CausalEdgeFull, type SavedDAG } from "@/lib/dag-store";
+import DAGCanvas, { edgeKey } from "@/components/dag/DAGCanvas";
+import VariableRolesPanel from "@/components/dag/VariableRolesPanel";
+import EdgeReasoningSheet from "@/components/dag/EdgeReasoningSheet";
+import { Link } from "react-router-dom";
 
 // Mock data for sessions
 const MOCK_SESSIONS: SessionSummary[] = [
@@ -220,6 +225,12 @@ const statusColors: Record<string, string> = {
 };
 
 
+// Mock attachment of library DAGs to sessions.
+const SESSION_DAG_ATTACHMENT: Record<string, string> = {
+  session_20260313_ab12: "dag_marketing_funnel_v1",
+  session_20260310_cd34: "dag_loyalty_v2",
+};
+
 function SessionDetail({ session, onBack, onViewDashboard, onViewComparison }: {
   session: SessionSummary;
   onBack: () => void;
@@ -227,6 +238,11 @@ function SessionDetail({ session, onBack, onViewDashboard, onViewComparison }: {
   onViewComparison: () => void;
 }) {
   const detail = MOCK_SESSION_DETAILS[session.session_id];
+  const { dags } = useDAGLibrary();
+  const attachedDag: SavedDAG | null =
+    dags.find((d) => d.dag_id === SESSION_DAG_ATTACHMENT[session.session_id]) ?? null;
+  const [selectedEdge, setSelectedEdge] = useState<CausalEdgeFull | null>(null);
+
   if (!detail) {
     return (
       <div className="space-y-4">
@@ -242,37 +258,113 @@ function SessionDetail({ session, onBack, onViewDashboard, onViewComparison }: {
     );
   }
 
-  const { nodes, edges } = buildCausalGraph(detail.variables);
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4 mr-1" /> Back to Sessions
-        </Button>
-        <Button size="sm" onClick={onViewDashboard} className="gap-1.5">
-          <ExternalLink className="h-3.5 w-3.5" /> View Results Dashboard
-        </Button>
-      </div>
-
-      <div>
-        <h2 className="text-base sm:text-lg font-semibold">Session: <span className="font-mono text-xs sm:text-sm">{session.session_id}</span></h2>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-sm text-muted-foreground">{session.date}</span>
-          <Badge variant="outline" className={statusColors[session.status]}>{session.status}</Badge>
-        </div>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title={session.session_id}
+        breadcrumbs={[{ label: "Session History", onClick: onBack }, { label: session.session_id }]}
+        icon={<History className="h-5 w-5" />}
+        meta={
+          <>
+            <span>{session.date}</span>
+            <span>·</span>
+            <StatusPill tone={session.status === "completed" ? "success" : session.status === "failed" ? "danger" : "info"}>
+              {session.status}
+            </StatusPill>
+          </>
+        }
+        actions={
+          <>
+            <Button variant="ghost" size="sm" onClick={onBack} className="h-8 gap-1">
+              <ArrowLeft className="h-3.5 w-3.5" /> Back
+            </Button>
+            <Button size="sm" onClick={onViewDashboard} className="h-8 gap-1.5">
+              <ExternalLink className="h-3.5 w-3.5" /> Dashboard
+            </Button>
+          </>
+        }
+      />
 
       <Tabs defaultValue="data-overview" className="space-y-4">
         <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
-          <TabsList className="inline-flex h-auto gap-1 w-max sm:w-auto">
-            <TabsTrigger value="data-overview" className="text-xs sm:text-sm px-2 sm:px-3">Data Overview</TabsTrigger>
-            <TabsTrigger value="imc" className="text-xs sm:text-sm px-2 sm:px-3">IMC Categorization</TabsTrigger>
-            <TabsTrigger value="causal-id" className="text-xs sm:text-sm px-2 sm:px-3">Causal Identification</TabsTrigger>
-            <TabsTrigger value="discovery" className="text-xs sm:text-sm px-2 sm:px-3">Causal Discovery</TabsTrigger>
-            {detail.modelResults && <TabsTrigger value="results" className="text-xs sm:text-sm px-2 sm:px-3">Results</TabsTrigger>}
+          <TabsList className="tabs-underline w-max sm:w-full">
+            <TabsTrigger value="data-overview">Data Overview</TabsTrigger>
+            <TabsTrigger value="imc">IMC Categorization</TabsTrigger>
+            <TabsTrigger value="causal-id">Causal Identification</TabsTrigger>
+            {attachedDag && (
+              <TabsTrigger value="causal-structure">Causal Structure</TabsTrigger>
+            )}
+            {detail.modelResults && <TabsTrigger value="results">Results</TabsTrigger>}
           </TabsList>
         </div>
+
+        {attachedDag && (
+          <TabsContent value="causal-structure">
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Workflow className="h-4 w-4 text-primary" /> {attachedDag.name}
+                      </CardTitle>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <Badge variant="outline" className="text-[10px]">
+                          {attachedDag.creation_mode === "llm_assisted" ? "AI-Generated" : "Manual"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {attachedDag.edges.length} edges · {attachedDag.variables.length} variables
+                        </span>
+                      </div>
+                    </div>
+                    <Button asChild size="sm" variant="outline" className="gap-1.5 self-start">
+                      <Link to="/discover">
+                        <ExternalLink className="h-3.5 w-3.5" /> View in Studio
+                      </Link>
+                    </Button>
+                  </div>
+                </CardHeader>
+              </Card>
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
+                <Card className="overflow-hidden">
+                  <CardHeader className="pb-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <CardTitle className="text-base">Causal DAG (read-only)</CardTitle>
+                      <div className="flex flex-wrap gap-3">
+                        {Object.entries(ROLE_COLORS).map(([role, color]) => (
+                          <span key={role} className="flex items-center gap-1.5 text-[11px] text-muted-foreground capitalize">
+                            <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: color }} />
+                            {role.replace("_", " ")}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <DAGCanvas
+                      treatment={attachedDag.treatment}
+                      outcome={attachedDag.outcome}
+                      variables={attachedDag.variables}
+                      edges={attachedDag.edges}
+                      variable_roles={attachedDag.variable_roles}
+                      readOnly
+                      selectedEdgeKey={selectedEdge ? edgeKey(selectedEdge) : null}
+                      onEdgeClick={setSelectedEdge}
+                      height="55vh"
+                    />
+                  </CardContent>
+                </Card>
+                <VariableRolesPanel
+                  treatment={attachedDag.treatment}
+                  outcome={attachedDag.outcome}
+                  variable_roles={attachedDag.variable_roles}
+                  domain_expertises={attachedDag.domain_expertises}
+                />
+              </div>
+              <EdgeReasoningSheet edge={selectedEdge} onClose={() => setSelectedEdge(null)} readOnly />
+            </div>
+          </TabsContent>
+        )}
 
         {/* Tab: Data Overview (Datasets + Column Mapping combined) */}
         <TabsContent value="data-overview">
@@ -343,48 +435,59 @@ function SessionDetail({ session, onBack, onViewDashboard, onViewComparison }: {
               <p className="text-sm text-muted-foreground">
                 The causal structure defined for this analysis session.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Treatment</span>
-                  <div><Badge className="bg-[hsl(200,60%,50%)]/10 text-[hsl(200,60%,50%)] border-[hsl(200,60%,50%)]/20" variant="outline">{detail.variables.treatment}</Badge></div>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Outcome</span>
-                  <div><Badge className="bg-[hsl(140,50%,45%)]/10 text-[hsl(140,50%,45%)] border-[hsl(140,50%,45%)]/20" variant="outline">{detail.variables.outcome}</Badge></div>
-                </div>
-              </div>
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Confounders</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {detail.variables.confounders.length > 0
-                      ? detail.variables.confounders.map((c) => (
-                          <Badge key={c} variant="outline" className="bg-[hsl(35,70%,50%)]/10 text-[hsl(35,70%,50%)] border-[hsl(35,70%,50%)]/20 text-xs">{c}</Badge>
-                        ))
-                      : <span className="text-xs text-muted-foreground italic">None specified</span>}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Mediators</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {detail.variables.mediators.length > 0
-                      ? detail.variables.mediators.map((m) => (
-                          <Badge key={m} variant="outline" className="bg-[hsl(270,40%,55%)]/10 text-[hsl(270,40%,55%)] border-[hsl(270,40%,55%)]/20 text-xs">{m}</Badge>
-                        ))
-                      : <span className="text-xs text-muted-foreground italic">None specified</span>}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Colliders</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {detail.variables.colliders.length > 0
-                      ? detail.variables.colliders.map((c) => (
-                          <Badge key={c} variant="outline" className="bg-[hsl(0,50%,55%)]/10 text-[hsl(0,50%,55%)] border-[hsl(0,50%,55%)]/20 text-xs">{c}</Badge>
-                        ))
-                      : <span className="text-xs text-muted-foreground italic">None specified</span>}
-                  </div>
-                </div>
-              </div>
+              {(() => {
+                const tinted = (c: string) => ({
+                  backgroundColor: c.replace("hsl(", "hsla(").replace(")", ", 0.18)"),
+                  color: c,
+                  border: `1px solid ${c.replace("hsl(", "hsla(").replace(")", ", 0.45)")}`,
+                });
+                return (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Treatment</span>
+                        <div><Badge style={tinted(ROLE_COLORS.treatment)} className="font-semibold">{detail.variables.treatment}</Badge></div>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Outcome</span>
+                        <div><Badge style={tinted(ROLE_COLORS.outcome)} className="font-semibold">{detail.variables.outcome}</Badge></div>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Confounders</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {detail.variables.confounders.length > 0
+                            ? detail.variables.confounders.map((c) => (
+                                <Badge key={c} style={tinted(ROLE_COLORS.confounder)} className="text-xs font-semibold">{c}</Badge>
+                              ))
+                            : <span className="text-xs text-muted-foreground italic">None specified</span>}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Mediators</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {detail.variables.mediators.length > 0
+                            ? detail.variables.mediators.map((m) => (
+                                <Badge key={m} style={tinted(ROLE_COLORS.mediator)} className="text-xs font-semibold">{m}</Badge>
+                              ))
+                            : <span className="text-xs text-muted-foreground italic">None specified</span>}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Colliders</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {detail.variables.colliders.length > 0
+                            ? detail.variables.colliders.map((c) => (
+                                <Badge key={c} style={tinted(ROLE_COLORS.collider)} className="text-xs font-semibold">{c}</Badge>
+                              ))
+                            : <span className="text-xs text-muted-foreground italic">None specified</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
@@ -432,46 +535,7 @@ function SessionDetail({ session, onBack, onViewDashboard, onViewComparison }: {
           </Card>
         </TabsContent>
 
-        {/* Tab 3: Causal Discovery */}
-        <TabsContent value="discovery">
-          <div className="space-y-4">
-            <Card>
-              <CardHeader><CardTitle className="text-base">PyWhy Reasoning</CardTitle></CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                  {detail.reasoning}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Causal DAG</CardTitle>
-                <div className="flex flex-wrap gap-3 mt-2">
-                  {[
-                    { role: "Treatment", color: "hsl(200, 60%, 50%)" },
-                    { role: "Outcome", color: "hsl(140, 50%, 45%)" },
-                    { role: "Confounder", color: "hsl(35, 70%, 50%)" },
-                    { role: "Mediator", color: "hsl(270, 40%, 55%)" },
-                    { role: "Collider", color: "hsl(0, 50%, 55%)" },
-                  ].map((l) => (
-                    <span key={l.role} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: l.color }} />
-                      {l.role}
-                    </span>
-                  ))}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[350px] border rounded-lg overflow-hidden">
-                  <ReactFlow nodes={nodes} edges={edges} fitView>
-                    <Background />
-                    <Controls />
-                  </ReactFlow>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+        {/* Causal Discovery tab removed — Causal Structure tab covers this. */}
 
         {/* Tab 4: Results */}
         {detail.modelResults && (
@@ -587,12 +651,12 @@ export default function SessionHistory() {
 
   const handleViewDashboard = (session: SessionSummary) => {
     setSessionId(session.session_id);
-    navigate("/");
+    navigate("/dashboard");
   };
 
   const handleViewComparison = (session: SessionSummary) => {
     setSessionId(session.session_id);
-    navigate("/?tab=comparison");
+    navigate("/dashboard?tab=comparison");
   };
 
   if (selectedSession) {
@@ -607,31 +671,35 @@ export default function SessionHistory() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Session History</h1>
-        <p className="text-muted-foreground text-sm mt-1">Browse and load previous analysis sessions.</p>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Session History"
+        description="Browse and load previous analysis sessions."
+        breadcrumbs={[{ label: "Session History" }]}
+        icon={<History className="h-5 w-5" />}
+        meta={<><span>{(sessions ?? MOCK_SESSIONS).length} sessions</span></>}
+        actions={
+          <Button size="sm" onClick={() => navigate("/new-analysis")} className="h-8 gap-1.5">
+            New analysis
+          </Button>
+        }
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">All Sessions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="space-y-3">
-              {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-12" />)}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
+      <div className="panel overflow-hidden">
+        {isLoading ? (
+          <div className="space-y-2 p-3">
+            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10" />)}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Session ID</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Treatment</TableHead>
-                  <TableHead>Outcome</TableHead>
-                  <TableHead>Status</TableHead>
+                <TableRow className="bg-surface-sunken hover:bg-surface-sunken">
+                  <TableHead className="text-[11px] uppercase tracking-wider">Session ID</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wider">Date</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wider">Treatment</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wider">Outcome</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wider">Status</TableHead>
                   <TableHead className="w-10"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -639,17 +707,19 @@ export default function SessionHistory() {
                 {(sessions ?? MOCK_SESSIONS).map((s) => (
                   <TableRow
                     key={s.session_id}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className="cursor-pointer hover:bg-muted/40"
                     onClick={() => setSelectedSession(s)}
                   >
                     <TableCell className="font-mono text-xs">{s.session_id}</TableCell>
-                    <TableCell className="text-sm">{s.date}</TableCell>
-                    <TableCell className="text-sm">{s.treatment}</TableCell>
-                    <TableCell className="text-sm">{s.outcome}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{s.date}</TableCell>
+                    <TableCell className="text-xs">{s.treatment}</TableCell>
+                    <TableCell className="text-xs">{s.outcome}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={statusColors[s.status]}>
+                      <StatusPill
+                        tone={s.status === "completed" ? "success" : s.status === "failed" ? "danger" : "info"}
+                      >
                         {s.status}
-                      </Badge>
+                      </StatusPill>
                     </TableCell>
                     <TableCell>
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -658,10 +728,9 @@ export default function SessionHistory() {
                 ))}
               </TableBody>
             </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

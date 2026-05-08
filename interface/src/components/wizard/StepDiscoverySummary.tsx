@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ReactFlow, Background, Controls } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { buildCausalGraph } from "@/lib/causal-graph";
+import { buildCausalGraph, ROLE_COLORS } from "@/lib/causal-graph";
 
 const MOCK: CausalDiscoveryResult = {
   dag_edges: [
@@ -110,11 +110,11 @@ export default function StepDiscoverySummary({ onNext, onBack }: { onNext: () =>
           <CardTitle className="text-base">Causal DAG</CardTitle>
           <div className="flex flex-wrap gap-3 mt-2">
             {[
-              { role: "Treatment", color: "hsl(200, 60%, 50%)" },
-              { role: "Outcome", color: "hsl(140, 50%, 45%)" },
-              { role: "Confounder", color: "hsl(35, 70%, 50%)" },
-              { role: "Mediator", color: "hsl(270, 40%, 55%)" },
-              { role: "Collider", color: "hsl(0, 50%, 55%)" },
+              { role: "Treatment", color: ROLE_COLORS.treatment },
+              { role: "Outcome", color: ROLE_COLORS.outcome },
+              { role: "Confounder", color: ROLE_COLORS.confounder },
+              { role: "Mediator", color: ROLE_COLORS.mediator },
+              { role: "Collider", color: ROLE_COLORS.collider },
             ].map((l) => (
               <span key={l.role} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: l.color }} />
@@ -125,7 +125,7 @@ export default function StepDiscoverySummary({ onNext, onBack }: { onNext: () =>
         </CardHeader>
         <CardContent>
           <div className="h-[400px] border rounded-lg overflow-hidden">
-            <ReactFlow nodes={nodes} edges={edges} fitView>
+            <ReactFlow nodes={nodes} edges={edges} fitView nodesDraggable>
               <Background />
               <Controls />
             </ReactFlow>

@@ -8,13 +8,32 @@ interface SelectedVariables {
   colliders: string[];
 }
 
-const ROLE_STYLES: Record<string, { background: string; border: string }> = {
-  treatment: { background: "hsl(200, 60%, 92%)", border: "2px solid hsl(200, 60%, 50%)" },
-  outcome: { background: "hsl(140, 50%, 90%)", border: "2px solid hsl(140, 50%, 45%)" },
-  confounder: { background: "hsl(35, 70%, 90%)", border: "2px solid hsl(35, 70%, 50%)" },
-  mediator: { background: "hsl(270, 40%, 92%)", border: "2px solid hsl(270, 40%, 55%)" },
-  collider: { background: "hsl(0, 50%, 92%)", border: "2px solid hsl(0, 50%, 55%)" },
+// Shared role palette used across the entire platform (DAG, badges, legends).
+export const ROLE_COLORS: Record<string, string> = {
+  treatment: "hsl(200, 60%, 50%)",
+  outcome: "hsl(140, 50%, 45%)",
+  confounder: "hsl(35, 70%, 50%)",
+  mediator: "hsl(270, 50%, 60%)",
+  collider: "hsl(0, 60%, 55%)",
+  instrumental_variable: "hsl(190, 50%, 45%)",
 };
+
+export const ROLE_LABELS: { role: keyof typeof ROLE_COLORS | string; label: string }[] = [
+  { role: "treatment", label: "Treatment" },
+  { role: "outcome", label: "Outcome" },
+  { role: "confounder", label: "Confounder" },
+  { role: "mediator", label: "Mediator" },
+  { role: "collider", label: "Collider" },
+];
+
+function nodeStyle(color: string) {
+  // Tinted background + colored border + readable foreground for both themes.
+  return {
+    background: color.replace("hsl(", "hsla(").replace(")", ", 0.15)"),
+    border: `2px solid ${color}`,
+    color: "hsl(var(--foreground))",
+  };
+}
 
 function getRole(variable: string, sv: SelectedVariables): string {
   if (variable === sv.treatment) return "treatment";
@@ -36,13 +55,16 @@ export function buildCausalGraph(sv: SelectedVariables): { nodes: Node[]; edges:
   const edges: Edge[] = [];
   let edgeIdx = 0;
 
-  const makeEdge = (source: string, target: string, animated = true): Edge => ({
+  const makeEdge = (source: string, target: string, animated = false): Edge => ({
     id: `e${edgeIdx++}`,
     source,
     target,
     animated,
-    style: { stroke: "hsl(var(--primary))" },
-    markerEnd: { type: "arrowclosed" as const },
+    label: "100%",
+    labelStyle: { fontSize: 10, fontWeight: 600, fill: "hsl(var(--muted-foreground))" },
+    labelBgStyle: { fill: "hsl(var(--card))" },
+    style: { stroke: "hsl(var(--primary))", strokeWidth: 1.8 },
+    markerEnd: { type: "arrowclosed" as const, color: "hsl(var(--primary))" },
   });
 
   // Treatment → Outcome (direct)
@@ -99,14 +121,13 @@ export function buildCausalGraph(sv: SelectedVariables): { nodes: Node[]; edges:
 
   const nodes: Node[] = Array.from(nodeMap.entries()).map(([id, pos]) => {
     const role = getRole(id, sv);
-    const style = ROLE_STYLES[role] || ROLE_STYLES.treatment;
+    const color = ROLE_COLORS[role] || ROLE_COLORS.treatment;
     return {
       id,
       position: pos,
       data: { label: `${id}\n(${role})` },
       style: {
-        ...style,
-        color: "hsl(220, 25%, 10%)",
+        ...nodeStyle(color),
         borderRadius: 8,
         padding: "10px 18px",
         fontSize: 12,

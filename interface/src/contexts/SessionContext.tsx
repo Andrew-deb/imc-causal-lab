@@ -5,6 +5,7 @@ interface SessionState {
   campaignTypes: string[];
   columns: string[];
   imcMapping: Record<string, string>;
+  selectedDagId: string | null;
 }
 
 interface SessionContextType extends SessionState {
@@ -12,6 +13,7 @@ interface SessionContextType extends SessionState {
   setCampaignTypes: (types: string[]) => void;
   setColumns: (cols: string[]) => void;
   setImcMapping: (mapping: Record<string, string>) => void;
+  setSelectedDagId: (id: string | null) => void;
   reset: () => void;
 }
 
@@ -20,6 +22,7 @@ const initial: SessionState = {
   campaignTypes: [],
   columns: [],
   imcMapping: {},
+  selectedDagId: null,
 };
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
@@ -33,6 +36,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setCampaignTypes: (types) => setState((s) => ({ ...s, campaignTypes: types })),
     setColumns: (cols) => setState((s) => ({ ...s, columns: cols })),
     setImcMapping: (mapping) => setState((s) => ({ ...s, imcMapping: mapping })),
+    setSelectedDagId: (id) => setState((s) => ({ ...s, selectedDagId: id })),
     reset: () => setState(initial),
   };
 

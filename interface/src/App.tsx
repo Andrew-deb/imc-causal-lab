@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { Layout } from "@/components/Layout";
+import Home from "@/pages/Home";
 import Dashboard from "@/pages/Dashboard";
 import NewAnalysis from "@/pages/NewAnalysis";
 import SessionHistory from "@/pages/SessionHistory";
@@ -25,9 +26,11 @@ const App = () => (
           <BrowserRouter>
             <Layout>
               <Routes>
-                <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Home />} />
+                <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/new-analysis" element={<NewAnalysis />} />
                 <Route path="/sessions" element={<SessionHistory />} />
+                <Route path="/discover" element={<ExplainabilityViewer />} />
                 <Route path="/explainability" element={<ExplainabilityViewer />} />
                 <Route path="/about" element={<About />} />
                 <Route path="*" element={<NotFound />} />

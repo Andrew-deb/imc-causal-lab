@@ -2,16 +2,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import causalDagImage from "@/assets/causal-dag-reference.png";
+import { PageHeader } from "@/components/console/PageHeader";
 
 export default function About() {
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">About the Platform</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Understanding the Causal Analytics Platform for IMC analysis.
-        </p>
-      </div>
+    <div className="max-w-4xl mx-auto space-y-5">
+      <PageHeader
+        title="About the Platform"
+        description="Understanding the Causal Analytics Platform for IMC analysis."
+        breadcrumbs={[{ label: "About" }]}
+      />
 
       {/* Causal Inference */}
       <Card>

@@ -1,9 +1,11 @@
-import { LayoutDashboard, PlusCircle, History, Eye, Info } from "lucide-react";
+import { Home, LayoutDashboard, PlusCircle, History, Workflow, Info, Boxes, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
+import { cn } from "@/lib/utils";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -13,65 +15,103 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 
-const items = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "New Causal Analysis", url: "/new-analysis", icon: PlusCircle },
-  { title: "Session History", url: "/sessions", icon: History },
-  { title: "Explainability Viewer", url: "/explainability", icon: Eye },
-  { title: "About Platform", url: "/about", icon: Info },
+const groups = [
+  {
+    label: "Workspace",
+    items: [
+      { title: "Home", url: "/", icon: Home, end: true },
+      { title: "About Platform", url: "/about", icon: Info },
+    ],
+  },
+  {
+    label: "Causal Lab",
+    items: [
+      { title: "New Analysis", url: "/new-analysis", icon: PlusCircle },
+      { title: "Session History", url: "/sessions", icon: History },
+      { title: "Discover Studio", url: "/discover", icon: Workflow },
+      { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+    ],
+  },
 ];
 
 export function AppSidebar() {
-  const { state } = useSidebar();
+  const { state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
-  const isActive = (path: string) =>
-    path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
+  const isActive = (path: string, end?: boolean) =>
+    end ? location.pathname === path : location.pathname.startsWith(path);
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarContent>
-        <div className="p-4 mb-2">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      <SidebarContent className="bg-sidebar">
+        {/* Brand */}
+        <div className={cn("h-12 flex items-center border-b border-sidebar-border px-3", collapsed && "justify-center px-0")}>
+          <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center shrink-0">
+            <Boxes className="h-4 w-4 text-primary-foreground" />
+          </div>
           {!collapsed && (
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-sm">CA</span>
-              </div>
-              <span className="font-semibold text-sm text-sidebar-foreground">
-                Causal Analytics
-              </span>
-            </div>
-          )}
-          {collapsed && (
-            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center mx-auto">
-              <span className="text-primary-foreground font-bold text-sm">CA</span>
-            </div>
+            <span className="ml-2 text-sm font-semibold text-sidebar-foreground tracking-tight">
+              Causal Console
+            </span>
           )}
         </div>
 
-        <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                    <NavLink
-                      to={item.url}
-                      end={item.url === "/"}
-                      className="hover:bg-sidebar-accent/50"
-                      activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
-                    >
-                      <item.icon className="h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {groups.map((g) => (
+          <SidebarGroup key={g.label} className="px-2">
+            {!collapsed && (
+              <SidebarGroupLabel className="text-[10px] uppercase tracking-wider text-sidebar-foreground/50 px-2 mt-2">
+                {g.label}
+              </SidebarGroupLabel>
+            )}
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {g.items.map((item) => {
+                  const active = isActive(item.url, item.end);
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton asChild isActive={active} className="relative h-8">
+                        <NavLink
+                          to={item.url}
+                          end={item.end}
+                          className={cn(
+                            "group/navlink flex items-center gap-2 rounded-md text-[13px] transition-colors",
+                            active
+                              ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                              : "text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent/60"
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-r-sm transition-colors",
+                              active ? "bg-sidebar-primary" : "bg-transparent"
+                            )}
+                          />
+                          <item.icon className={cn("h-4 w-4 shrink-0", active ? "text-sidebar-primary" : "text-sidebar-foreground/60")} />
+                          {!collapsed && <span className="truncate">{item.title}</span>}
+                        </NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
+      <SidebarFooter className="bg-sidebar border-t border-sidebar-border p-2">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className={cn(
+            "flex items-center gap-2 h-8 rounded-md text-[12px] text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/60 transition-colors w-full",
+            collapsed ? "justify-center px-0" : "px-2"
+          )}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          {!collapsed && <span>Collapse</span>}
+        </button>
+      </SidebarFooter>
     </Sidebar>
   );
 }
