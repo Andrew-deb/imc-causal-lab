@@ -125,10 +125,14 @@ def verify_and_save_dag(request: DAGVerifyAndSaveRequest) -> SavedDAG:
     if request.session_id:
         from app.services.session_service import session_manager
         try:
-            session_manager.update_session(request.session_id, dag_id=dag_id)
-            logger.info(f"DAG {dag_id[:8]} attached to session {request.session_id[:8]}")
+            session_manager.update_session(
+                request.session_id, 
+                dag_id=dag_id,
+                status="discovery_completed"
+            )
+            logger.info(f"DAG {dag_id[:12]} attached to session {request.session_id[:12]}")
         except ValueError:
-            logger.warning(f"Session {request.session_id[:8]} not found — DAG saved but not attached")
+            logger.warning(f"Session {request.session_id[:12]} not found — DAG saved but not attached")
 
     return SavedDAG(**doc)
 

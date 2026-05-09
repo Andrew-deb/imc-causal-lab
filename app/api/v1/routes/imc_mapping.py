@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter
 
-from app.schemas.imc_mapping import IMCMappingRequest, IMCMappingResponse
+from app.schemas.imc_mapping import IMCMappingRequest, IMCMappingResponse, IMCConfirmRequest
 from app.services.imc_mapping import map_capmpaign_types_to_imc
 from app.configs import settings, DEFAULT_IMC_MAPPING
 from app.utils.error_handling import handle_route_errors, require_session
@@ -43,3 +43,22 @@ async def map_campaigns(request: IMCMappingRequest):
         session_manager.update_session(request.session_id, imc_mapping=result.mapping, status="mapped")
 
     return result
+
+@router.post("/confirm-mapping")
+@handle_route_errors("IMC confirm mapping")
+async def confirm_mapping(request: IMCConfirmRequest):
+    """
+    Explicitly save the confirmed IMC mapping to the session.
+    Used when the user edits the AI mapping or resumes a session.
+    """
+    session = require_session(request.session_id)
+    if session:
+        from app.services.session_service import session_manager
+        session_manager.update_session(
+            request.session_id, 
+            imc_mapping=request.mapping, 
+            status="mapped"
+        )
+        logger.info(f"Session {request.session_id[:12]}: IMC mapping confirmed ({len(request.mapping)} categories)")
+    return {"status": "success", "session_id": request.session_id}
+

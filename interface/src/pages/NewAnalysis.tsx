@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useSession } from "@/contexts/SessionContext";
 import { cn } from "@/lib/utils";
 import { Check, PlusCircle } from "lucide-react";
@@ -19,8 +19,21 @@ const STEPS = [
 ];
 
 export default function NewAnalysis() {
-  const [currentStep, setCurrentStep] = useState(0);
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Calculate initial step based on the resumeStatus passed from Home.tsx
+  const getInitialStep = () => {
+    const status = location.state?.resumeStatus;
+    if (status === "uploaded") return 1; // Go to IMC mapping
+    if (status === "mapped") return 2; // Go to Causal Identification
+    if (status === "discovery_started") return 2; // In the middle of discovery
+    if (status === "discovery_completed") return 3; // Go to Discovery Summary
+    if (status === "pipeline_running") return 4; // Go to Generate Results
+    return 0; // Default to step 0
+  };
+
+  const [currentStep, setCurrentStep] = useState(getInitialStep);
 
   const goNext = () => setCurrentStep((s) => Math.min(s + 1, STEPS.length - 1));
   const goBack = () => setCurrentStep((s) => Math.max(s - 1, 0));

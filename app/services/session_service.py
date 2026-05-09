@@ -29,7 +29,7 @@ class SessionManager:
         dataset_meta: dict,
     ) -> str:
         """Create a new session with uploaded datasets. Returns session_id."""
-        session_id = str(uuid.uuid4())
+        session_id = f"session_{uuid.uuid4()}"
         now = datetime.now(timezone.utc)
 
         self._store[session_id] = {
@@ -107,7 +107,7 @@ class MongoSessionManager:
         self._col.create_index("session_id", unique=True)
 
     def create_session(self, customers_df, transactions_df, campaigns_df, dataset_meta):
-        session_id = str(uuid.uuid4())
+        session_id = f"session_{uuid.uuid4()}"
         now = datetime.now(timezone.utc)
 
         # Import our new Azure helpers

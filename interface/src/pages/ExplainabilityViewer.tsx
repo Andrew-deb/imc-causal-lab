@@ -192,7 +192,7 @@ function Wrapper({ title, children }: { title: string; children: React.ReactNode
 function DAGDetail({ dag, onBack, onSave, onDelete }: {
   dag: SavedDAG;
   onBack: () => void;
-  onSave: (d: Omit<SavedDAG, "dag_id" | "created_at" | "updated_at" | "adjacency_list"> & { dag_id?: string }) => SavedDAG;
+  onSave: (d: Omit<SavedDAG, "dag_id" | "created_at" | "updated_at" | "adjacency_list"> & { dag_id?: string }) => Promise<SavedDAG>;
   onDelete: (id: string) => void;
 }) {
   const { toast } = useToast();
@@ -211,9 +211,14 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
   const handleDelete = (e: CausalEdgeFull) => {
     setEdges((prev) => prev.filter((x) => !(x.source === e.source && x.target === e.target)));
   };
-  const persist = () => {
-    onSave({ ...dag, edges });
-    toast({ title: "DAG updated", description: dag.name });
+  const persist = async () => {
+    try {
+      await onSave({ ...dag, edges });
+      toast({ title: "DAG updated", description: dag.name });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Update failed";
+      toast({ title: "Failed to update DAG", description: msg, variant: "destructive" });
+    }
   };
 
   return (

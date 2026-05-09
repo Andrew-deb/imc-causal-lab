@@ -36,9 +36,22 @@ def merge_datasets(
     ctype_col = col_mapping.campaign_type_col
 
     # ── Parse dates ────────────────────────────────────────────────
-    transactions_df[tx_date] = pd.to_datetime(transactions_df[tx_date])
-    campaigns_df[start_col] = pd.to_datetime(campaigns_df[start_col])
-    campaigns_df[end_col] = pd.to_datetime(campaigns_df[end_col])
+    try:
+        transactions_df[tx_date] = pd.to_datetime(transactions_df[tx_date])
+    except Exception as e:
+        raise ValueError(
+            f"Failed to parse dates in transaction column '{tx_date}'. "
+            f"Ensure you selected the correct date column during mapping. Error: {str(e)[:100]}"
+        )
+
+    try:
+        campaigns_df[start_col] = pd.to_datetime(campaigns_df[start_col])
+        campaigns_df[end_col] = pd.to_datetime(campaigns_df[end_col])
+    except Exception as e:
+        raise ValueError(
+            f"Failed to parse dates in campaign columns '{start_col}' or '{end_col}'. "
+            f"Ensure you selected correct date columns. Error: {str(e)[:100]}"
+        )
 
     # ── Join customers + transactions ──────────────────────────────
     merged = transactions_df.merge(customers_df, on=cust_id, how="left")

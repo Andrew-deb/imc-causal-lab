@@ -10,6 +10,8 @@ class DatasetUploadResponse(BaseModel):
     customers_rows: int
     transactions_rows: int
     campaigns_rows: int
+    # Unique campaign type values (for IMC mapping step)
+    campaign_types: list[str] = []
 
 
 class ColumnMappingRequest(BaseModel):

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -5,26 +6,76 @@ import { PageHeader } from "@/components/console/PageHeader";
 import { StatusPill } from "@/components/console/StatusPill";
 import { useDAGLibrary } from "@/lib/dag-store";
 import { useSession } from "@/contexts/SessionContext";
+import { api } from "@/lib/api";
 import {
   Home as HomeIcon, PlusCircle, History, Workflow, ArrowRight,
-  LayoutDashboard, Sparkles, Clock,
+  LayoutDashboard, Sparkles, Clock, Loader2, PlayCircle, Trash2,
 } from "lucide-react";
-import { format, parseISO, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, parseISO } from "date-fns";
 
-const RECENT_SESSIONS = [
-  { id: "session_20260313_ab12", date: "2026-03-13", status: "completed", treatment: "imc_category", outcome: "purchase" },
-  { id: "session_20260310_cd34", date: "2026-03-10", status: "completed", treatment: "imc_category", outcome: "conversion" },
-  { id: "session_20260308_ef56", date: "2026-03-08", status: "failed", treatment: "channel_type", outcome: "revenue" },
-];
+interface RecentSession {
+  session_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  dataset_meta: Record<string, unknown> | null;
+  has_results: boolean;
+}
+
+/** Truncate UUIDs to a readable short ID: session_afd2c34b */
+function shortId(id: string) {
+  const uuid = id.replace(/^session_/, "");
+  return `session_${uuid.slice(0, 8)}`;
+}
+
+function statusTone(status: string): "success" | "danger" | "info" | "warning" {
+  if (status === "complete" || status === "completed") return "success";
+  if (status === "error" || status === "failed") return "danger";
+  if (status === "running") return "warning";
+  return "info";
+}
 
 export default function Home() {
   const navigate = useNavigate();
   const { dags } = useDAGLibrary();
-  const { sessionId } = useSession();
+  const { sessionId, setSessionId } = useSession();
   const latestDag = dags[0];
 
-  const fmt = (d: string) => { try { return format(parseISO(d), "MMM d, yyyy"); } catch { return d; } };
-  const rel = (d: string) => { try { return formatDistanceToNow(parseISO(d), { addSuffix: true }); } catch { return ""; } };
+  const [sessions, setSessions] = useState<RecentSession[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(true);
+
+  useEffect(() => {
+    api.getSessions()
+      .then((list) => setSessions(list.slice(0, 5))) // show last 5
+      .catch(() => setSessions([]))
+      .finally(() => setLoadingSessions(false));
+  }, []);
+
+  const rel = (d: string) => {
+    try { return formatDistanceToNow(parseISO(d), { addSuffix: true }); } catch { return ""; }
+  };
+
+  const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this session?")) return;
+    try {
+      await api.deleteSession(id);
+      setSessions((prev) => prev.filter((s) => s.session_id !== id));
+      if (sessionId === id) setSessionId(null);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSessionClick = (s: RecentSession) => {
+    setSessionId(s.session_id);
+    if (s.status === "complete" || s.status === "completed") {
+      navigate("/dashboard");
+    } else {
+      // Resume in-progress session
+      navigate("/new-analysis", { state: { resumeSessionId: s.session_id, resumeStatus: s.status } });
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -49,7 +100,7 @@ export default function Home() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Recent sessions */}
+        {/* Recent sessions — real data */}
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -60,26 +111,55 @@ export default function Home() {
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            <ul className="divide-y divide-border">
-              {RECENT_SESSIONS.map((s) => (
-                <li
-                  key={s.id}
-                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40 cursor-pointer"
-                  onClick={() => navigate("/sessions")}
-                >
-                  <History className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-mono text-xs truncate">{s.id}</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {s.date} · {s.treatment} → {s.outcome}
+            {loadingSessions ? (
+              <div className="flex items-center justify-center py-8 text-muted-foreground gap-2 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading sessions…
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                No sessions yet. Start a new analysis to see activity here.
+              </div>
+            ) : (
+              <ul className="divide-y divide-border">
+                {sessions.map((s) => (
+                  <li
+                    key={s.session_id}
+                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40 cursor-pointer"
+                    onClick={() => handleSessionClick(s)}
+                  >
+                    <History className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono text-xs truncate">{shortId(s.session_id)}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {rel(s.created_at)}
+                        {s.dataset_meta && typeof s.dataset_meta === "object" && (
+                          <> · {(s.dataset_meta as Record<string, number>).campaigns_rows ?? "?"} campaigns</>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <StatusPill tone={s.status === "completed" ? "success" : s.status === "failed" ? "danger" : "info"}>
-                    {s.status}
-                  </StatusPill>
-                </li>
-              ))}
-            </ul>
+                    <div className="flex items-center gap-2">
+                      {/* Show "Continue" for incomplete sessions */}
+                      {s.status !== "complete" && s.status !== "completed" && s.status !== "error" && s.status !== "failed" && (
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px] gap-1 text-primary hover:text-primary">
+                          <PlayCircle className="h-3 w-3" /> Continue
+                        </Button>
+                      )}
+                      <StatusPill tone={statusTone(s.status)}>
+                        {s.status}
+                      </StatusPill>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                        onClick={(e) => handleDeleteSession(e, s.session_id)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
 
@@ -116,7 +196,7 @@ export default function Home() {
             <CardContent>
               {sessionId ? (
                 <div className="space-y-2">
-                  <div className="font-mono text-xs break-all">{sessionId}</div>
+                  <div className="font-mono text-xs break-all">{shortId(sessionId)}</div>
                   <Button asChild size="sm" variant="outline" className="h-7 text-xs w-full">
                     <Link to="/dashboard">View dashboard</Link>
                   </Button>

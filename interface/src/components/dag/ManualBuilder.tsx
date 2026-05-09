@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Pencil, Save, ArrowLeft, Hand } from "lucide-react";
+import { Pencil, Save, ArrowLeft, Hand, Loader2 } from "lucide-react";
 import TagInput from "./TagInput";
 import DAGCanvas, { edgeKey } from "./DAGCanvas";
 import VariableRolesPanel from "./VariableRolesPanel";
@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 interface Props {
   onSaved: (dag: SavedDAG) => void;
   onCancel?: () => void;
-  saveDag: (dag: Omit<SavedDAG, "dag_id" | "created_at" | "updated_at" | "adjacency_list"> & { dag_id?: string }) => SavedDAG;
+  saveDag: (dag: Omit<SavedDAG, "dag_id" | "created_at" | "updated_at" | "adjacency_list"> & { dag_id?: string }) => Promise<SavedDAG>;
 }
 
 export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
@@ -31,6 +31,7 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
   const [canvasReady, setCanvasReady] = useState(false);
   const [edges, setEdges] = useState<CausalEdgeFull[]>([]);
   const [selected, setSelected] = useState<CausalEdgeFull | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const roles: VariableRoles = {
     confounders, mediators, colliders, instrumental_variables: instruments,
@@ -61,24 +62,32 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
     setEdges((prev) => prev.filter((x) => !(x.source === e.source && x.target === e.target)));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (edges.length === 0) {
       toast({ title: "No edges defined", description: "Drag between nodes on the canvas to add at least one edge.", variant: "destructive" });
       return;
     }
-    const saved = saveDag({
-      name,
-      description: `Manually built DAG with ${edges.length} edges.`,
-      treatment, outcome,
-      variables: allVars,
-      edges,
-      variable_roles: roles,
-      creation_mode: "manual",
-      model_used: "manual",
-      domain_expertises: [],
-    });
-    toast({ title: "DAG saved to library", description: saved.name });
-    onSaved(saved);
+    setSaving(true);
+    try {
+      const saved = await saveDag({
+        name,
+        description: `Manually built DAG with ${edges.length} edges.`,
+        treatment, outcome,
+        variables: allVars,
+        edges,
+        variable_roles: roles,
+        creation_mode: "manual",
+        model_used: "manual",
+        domain_expertises: [],
+      });
+      toast({ title: "DAG saved to library", description: saved.name });
+      onSaved(saved);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Save failed";
+      toast({ title: "Failed to save DAG", description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -153,8 +162,8 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
           </div>
           <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
             <Button variant="outline" onClick={() => setCanvasReady(false)}>Edit Variables</Button>
-            <Button id="dag-save-btn" onClick={handleSave} className="gap-1.5">
-              <Save className="h-4 w-4" /> Save to Library
+            <Button id="dag-save-btn" onClick={handleSave} disabled={saving} className="gap-1.5">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save to Library
             </Button>
           </div>
         </div>

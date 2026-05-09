@@ -53,6 +53,14 @@ class ColumnMapping(BaseModel):
     mediator_cols: list[str] = []
     collider_cols: list[str] = []
 
+
+class RunPipelineRequest(BaseModel):
+    """
+    Simplified pipeline request — just session_id.
+    Column mapping is pulled from the session (stored during upload).
+    """
+    session_id: str
+
 class ModelingConfig(BaseModel):
     
     outcome_window_days: int = 30

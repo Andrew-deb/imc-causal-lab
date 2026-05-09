@@ -9,13 +9,13 @@ import TagInput from "./TagInput";
 import DAGCanvas, { edgeKey } from "./DAGCanvas";
 import VariableRolesPanel from "./VariableRolesPanel";
 import EdgeReasoningSheet from "./EdgeReasoningSheet";
-import { mockDiscoverDAG, type CausalEdgeFull, type SavedDAG, type VariableRoles } from "@/lib/dag-store";
+import { discoverDAG, type CausalEdgeFull, type SavedDAG, type VariableRoles } from "@/lib/dag-store";
 import { useToast } from "@/hooks/use-toast";
 
 interface Props {
   onSaved: (dag: SavedDAG) => void;
   onCancel?: () => void;
-  saveDag: (dag: Omit<SavedDAG, "dag_id" | "created_at" | "updated_at" | "adjacency_list"> & { dag_id?: string }) => SavedDAG;
+  saveDag: (dag: Omit<SavedDAG, "dag_id" | "created_at" | "updated_at" | "adjacency_list"> & { dag_id?: string }) => Promise<SavedDAG>;
   embedded?: boolean;
   sessionId?: string | null;
 }
@@ -35,12 +35,14 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
 
   const [loading, setLoading] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   const [edges, setEdges] = useState<CausalEdgeFull[] | null>(null);
   const [roles, setRoles] = useState<VariableRoles | null>(null);
   const [domains, setDomains] = useState<string[]>([]);
   const [model, setModel] = useState<string>("");
   const [selected, setSelected] = useState<CausalEdgeFull | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const allVars = Array.from(new Set([treatment, outcome, ...variables].filter(Boolean)));
 
@@ -51,17 +53,35 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
     }
     setLoading(true);
     setEdges(null);
+    setError(null);
     setStepIdx(0);
-    const t1 = setTimeout(() => setStepIdx(1), 500);
-    const t2 = setTimeout(() => setStepIdx(2), 1000);
+
+    // Simulate step progression while the API is running.
+    const t1 = setTimeout(() => setStepIdx(1), 2000);
+    const t2 = setTimeout(() => setStepIdx(2), 5000);
+
     try {
-      const res = await mockDiscoverDAG({ variables: allVars, treatment, outcome, name });
+      const res = await discoverDAG({
+        variables: allVars,
+        treatment,
+        outcome,
+        sessionId: sessionId ?? null,
+      });
       setEdges(res.edges);
       setRoles(res.variable_roles);
       setDomains(res.domain_expertises);
       setModel(res.model_used);
+
+      if (res.edges.length === 0) {
+        setError("The LLM did not discover any causal edges. Try adding more variables or adjusting the treatment/outcome.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Discovery failed";
+      setError(msg);
+      toast({ title: "Discovery failed", description: msg, variant: "destructive" });
     } finally {
-      clearTimeout(t1); clearTimeout(t2);
+      clearTimeout(t1);
+      clearTimeout(t2);
       setLoading(false);
     }
   };
@@ -82,39 +102,27 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
 
   const handleSave = async () => {
     if (!edges || !roles) return;
-    const payload = {
-      name,
-      description: "",
-      treatment,
-      outcome,
-      edges,
-      variable_roles: roles,
-      domain_expertises: domains,
-      model_used: "",
-      session_id: sessionId ?? null,
-    };
-    // Best-effort backend persistence — fall back to local store on failure.
+    setSaving(true);
     try {
-      await fetch("/api/v1/causal-discovery/dags/verify-and-save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const saved = await saveDag({
+        name,
+        description: `${edges.filter((e) => e.origin === "llm").length} AI + ${edges.filter((e) => e.origin === "manual").length} manual edges.`,
+        treatment, outcome,
+        variables: allVars,
+        edges,
+        variable_roles: roles,
+        creation_mode: "llm_assisted",
+        model_used: model || "",
+        domain_expertises: domains,
       });
-    } catch { /* ignore — local store is source of truth in mock mode */ }
-
-    const saved = saveDag({
-      name,
-      description: `${edges.filter((e) => e.origin === "llm").length} AI + ${edges.filter((e) => e.origin === "manual").length} manual edges.`,
-      treatment, outcome,
-      variables: allVars,
-      edges,
-      variable_roles: roles,
-      creation_mode: "llm_assisted",
-      model_used: model || "mock-llm",
-      domain_expertises: domains,
-    });
-    toast({ title: "DAG saved to library ✅", description: saved.name });
-    onSaved(saved);
+      toast({ title: "DAG saved to library ✅", description: saved.name });
+      onSaved(saved);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Save failed";
+      toast({ title: "Failed to save DAG", description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -170,6 +178,11 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
                 ))}
               </div>
             )}
+            {error && !loading && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
             <div className="flex justify-end">
               <Button id="dag-generate-btn" onClick={runDiscovery} disabled={loading} className="gap-1.5">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -218,8 +231,9 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
             <Button variant="outline" onClick={runDiscovery} disabled={loading} className="gap-1.5">
               <RefreshCw className="h-4 w-4" /> Regenerate
             </Button>
-            <Button id="dag-save-btn" onClick={handleSave} className="gap-1.5">
-              <Save className="h-4 w-4" /> Save to Library
+            <Button id="dag-save-btn" onClick={handleSave} disabled={saving} className="gap-1.5">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save to Library
             </Button>
           </div>
         </div>

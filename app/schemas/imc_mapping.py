@@ -21,3 +21,8 @@ class IMCMappingResponse(BaseModel):
     session_id: str
     mapping: dict[str, str]
     unmapped: list[str] = []
+
+class IMCConfirmRequest(BaseModel):
+    """Request to explicitly save/confirm an IMC mapping."""
+    session_id: str
+    mapping: dict[str, str]

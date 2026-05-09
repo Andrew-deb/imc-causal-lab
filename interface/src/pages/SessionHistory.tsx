@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SessionSummary } from "@/lib/api";
 import { useSession } from "@/contexts/SessionContext";
 import { useNavigate } from "react-router-dom";
@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { ROLE_COLORS } from "@/lib/causal-graph";
-import { ArrowLeft, ExternalLink, ChevronRight, TrendingUp, Target, BarChart3, Award, Workflow, History } from "lucide-react";
+import { ArrowLeft, ExternalLink, ChevronRight, TrendingUp, Target, BarChart3, Award, Workflow, History, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/console/PageHeader";
 import { StatusPill } from "@/components/console/StatusPill";
 import SessionDatasetPreview, { StoredDataset } from "@/components/session/SessionDatasetPreview";
@@ -634,8 +634,9 @@ function SessionDetail({ session, onBack, onViewDashboard, onViewComparison }: {
 
 export default function SessionHistory() {
   const navigate = useNavigate();
-  const { setSessionId } = useSession();
+  const { sessionId, setSessionId } = useSession();
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null);
+  const queryClient = useQueryClient();
 
   const { data: sessions, isLoading } = useQuery({
     queryKey: ["sessions"],
@@ -657,6 +658,20 @@ export default function SessionHistory() {
   const handleViewComparison = (session: SessionSummary) => {
     setSessionId(session.session_id);
     navigate("/dashboard?tab=comparison");
+  };
+
+  const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this session?")) return;
+    try {
+      await api.deleteSession(id);
+      queryClient.setQueryData(["sessions"], (old: SessionSummary[] | undefined) => 
+        old ? old.filter((s) => s.session_id !== id) : []
+      );
+      if (sessionId === id) setSessionId(null);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   if (selectedSession) {
@@ -721,7 +736,15 @@ export default function SessionHistory() {
                         {s.status}
                       </StatusPill>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-right flex items-center justify-end gap-2">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                        onClick={(e) => handleDeleteSession(e, s.session_id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </TableCell>
                   </TableRow>

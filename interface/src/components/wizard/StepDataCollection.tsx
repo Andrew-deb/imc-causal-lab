@@ -163,14 +163,30 @@ export default function StepDataCollection({ onNext }: { onNext: () => void }) {
     setLoading(true);
     try {
       const formData = new FormData();
-      files.forEach((f) => formData.append("files", f));
+
+      // Map files to their backend field names based on role assignments
+      const roleToField: Record<string, string> = {
+        campaign: "campaigns",
+        transaction: "transactions",
+        customer: "customers",
+      };
+
+      for (let i = 0; i < files.length; i++) {
+        const role = roleAssignments[i]?.role;
+        const fieldName = roleToField[role];
+        if (fieldName) {
+          formData.append(fieldName, files[i]);
+        }
+      }
+
+      // Send column mapping and roles as JSON metadata
       formData.append("roles", JSON.stringify(roleAssignments));
       formData.append("column_mapping", JSON.stringify(columnMapping));
 
       const res = await api.uploadDataset(formData);
       setSessionId(res.session_id);
-      setCampaignTypes(res.campaign_types);
-      setColumns(res.columns || []);
+      setCampaignTypes(res.campaign_types ?? []);
+      setColumns(res.customers_columns ?? []);
       toast({ title: "Dataset uploaded", description: `Session: ${res.session_id}` });
       onNext();
     } catch {

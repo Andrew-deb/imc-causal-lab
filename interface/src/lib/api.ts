@@ -1,15 +1,149 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
+/**
+ * API Client — wired to the FastAPI backend.
+ *
+ * Backend prefix:  /api/v1
+ * Route prefixes:  /datasets, /imc, /causal-discovery, /modeling, /dashboard
+ */
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+
+// ─── Generic request helper ─────────────────────────────────────────
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
   });
-  if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${res.statusText} — ${body}`);
+  }
+  // 204 No Content (e.g. DELETE)
+  if (res.status === 204) return undefined as unknown as T;
   return res.json();
 }
 
-// Types
+// ─── Shared Types ───────────────────────────────────────────────────
+
+export interface CausalEdge {
+  source: string;
+  target: string;
+  confidence: number;
+  relationship_type: "direct" | "confounder" | "mediator";
+  reasoning: string;
+  origin: "llm" | "manual";
+}
+
+export interface VariableRoles {
+  confounders: string[];
+  mediators: string[];
+  colliders: string[];
+  instrumental_variables: string[];
+}
+
+// ─── Dataset Types ──────────────────────────────────────────────────
+
+export interface UploadResponse {
+  session_id: string;
+  customers_columns: string[];
+  transactions_columns: string[];
+  campaigns_columns: string[];
+  customers_rows: number;
+  transactions_rows: number;
+  campaigns_rows: number;
+  campaign_types: string[];
+}
+
+// ─── IMC Mapping Types ──────────────────────────────────────────────
+
+export interface ImcMappingResponse {
+  session_id: string;
+  mapping: Record<string, string>;
+  unmapped: string[];
+}
+
+// ─── Causal Discovery Types ─────────────────────────────────────────
+
+export interface DAGDiscoveryRequest {
+  session_id?: string | null;
+  variables?: string[] | null;
+  treatment_col?: string | null;
+  outcome_col?: string | null;
+}
+
+export interface DAGDiscoveryResponse {
+  session_id: string;
+  treatment: string;
+  outcome: string;
+  domain_expertises: string[];
+  edges: CausalEdge[];
+  adjacency_list: Record<string, string[]>;
+  variable_roles: VariableRoles;
+  variables_analyzed: string[];
+  model_used: string;
+  num_llm_calls: number;
+}
+
+// ─── DAG Library Types ──────────────────────────────────────────────
+
+export interface SavedDAG {
+  dag_id: string;
+  name: string;
+  description: string;
+  treatment: string;
+  outcome: string;
+  variables: string[];
+  edges: CausalEdge[];
+  adjacency_list: Record<string, string[]>;
+  variable_roles: VariableRoles;
+  creation_mode: "llm_assisted" | "manual";
+  model_used: string;
+  domain_expertises: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DAGListItem {
+  dag_id: string;
+  name: string;
+  treatment: string;
+  outcome: string;
+  edge_count: number;
+  variable_count: number;
+  creation_mode: string;
+  created_at: string;
+}
+
+export interface DAGCreateRequest {
+  name: string;
+  description?: string;
+  treatment: string;
+  outcome: string;
+  edges: CausalEdge[];
+  variable_roles: VariableRoles;
+}
+
+export interface DAGVerifyAndSaveRequest {
+  name: string;
+  description?: string;
+  treatment: string;
+  outcome: string;
+  edges: CausalEdge[];
+  variable_roles: VariableRoles;
+  domain_expertises?: string[];
+  model_used?: string;
+  session_id?: string | null;
+}
+
+export interface DAGUpdateRequest {
+  name?: string;
+  description?: string;
+  edges?: CausalEdge[];
+  variable_roles?: VariableRoles;
+}
+
+// ─── Dashboard / Results Types ──────────────────────────────────────
+
 export interface SessionResults {
   ATE: number;
   ATT: number;
@@ -23,52 +157,6 @@ export interface SessionResults {
     lost_causes: number;
   };
   cate_analysis: Record<string, Record<string, number>>;
-}
-
-export interface UploadResponse {
-  session_id: string;
-  campaign_types: string[];
-  columns: string[];
-}
-
-export interface ImcMapping {
-  mapping: Record<string, string>;
-}
-
-export interface CausalEdge {
-  source: string;
-  target: string;
-  confidence: number;
-  relationship_type: "direct" | "confounder" | "mediator";
-  reasoning: string;
-}
-
-export interface VariableRoles {
-  confounders: string[];
-  mediators: string[];
-  colliders: string[];
-  instrumental_variables: string[];
-}
-
-export interface DAGDiscoveryResponse {
-  session_id: string;
-  treatment: string;
-  outcome: string;
-  domain_expertises: string[];
-  edges: CausalEdge[];
-  variable_roles: VariableRoles;
-}
-
-export interface CausalDiscoveryResult {
-  dag_edges: { source: string; target: string }[];
-  reasoning: string;
-  selected_variables: {
-    treatment: string;
-    outcome: string;
-    confounders: string[];
-    mediators: string[];
-    colliders: string[];
-  };
 }
 
 export interface CurveData {
@@ -91,20 +179,14 @@ export interface ModelEvaluationResult {
   metrics: EvaluationMetrics;
 }
 
+// ─── Session Types (for Session History — no backend yet, mock-compatible) ──
+
 export interface SessionSummary {
   session_id: string;
   date: string;
   treatment: string;
   outcome: string;
   status: "completed" | "in_progress" | "failed";
-}
-
-export interface ExplainabilityData {
-  variable_roles: Record<string, string>;
-  imc_mapping: Record<string, string>;
-  dag_edges: { source: string; target: string }[];
-  reasoning: string;
-  metrics: Record<string, number>;
 }
 
 export interface CrossModelComparison {
@@ -149,71 +231,115 @@ export interface DetailedComparison {
   channel_summary: ChannelSummary[];
 }
 
-// API functions
-export const api = {
-  getSessionResults: (sessionId: string) =>
-    request<SessionResults>(`/session/${sessionId}/results`),
+// ─── API Functions ──────────────────────────────────────────────────
 
+export const api = {
+  // ── Dataset ──
   uploadDataset: (formData: FormData) =>
-    fetch(`${API_BASE}/upload-dataset`, { method: "POST", body: formData }).then(
-      (r) => {
+    fetch(`${API_BASE}/datasets/upload`, { method: "POST", body: formData }).then(
+      async (r) => {
         if (!r.ok) throw new Error("Upload failed");
         return r.json() as Promise<UploadResponse>;
       }
     ),
 
+  getColumns: (sessionId: string) =>
+    request<{ session_id: string; customers_columns: string[]; transactions_columns: string[]; campaigns_columns: string[] }>(
+      `/datasets/columns/${sessionId}`
+    ),
+
+  // ── IMC Mapping ──
+  // POST /imc/map-campaigns generates the mapping AND saves it to the session.
+  // The frontend schema difference: backend expects `campaign_values`, not `campaign_types`.
   generateImcMapping: (sessionId: string, campaignTypes: string[]) =>
-    request<ImcMapping>("/generate-imc-mapping", {
+    request<ImcMappingResponse>("/imc/map-campaigns", {
       method: "POST",
-      body: JSON.stringify({ session_id: sessionId, campaign_types: campaignTypes }),
+      body: JSON.stringify({ session_id: sessionId, campaign_values: campaignTypes }),
     }),
 
-  confirmImcMapping: (sessionId: string, mapping: Record<string, string>) =>
-    request<{ status: string }>("/confirm-imc-mapping", {
+  // Explicitly confirm and save the IMC mapping to the backend session.
+  // This ensures that resumed sessions or edited mappings are synced.
+  confirmImcMapping: async (sessionId: string, mapping: Record<string, string>) =>
+    request<{ status: string; session_id: string }>("/imc/confirm-mapping", {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId, mapping }),
     }),
 
-  runCausalDiscovery: (
-    sessionId: string,
-    treatment: string,
-    outcome: string,
-    confounders: string[],
-    mediators?: string[],
-    colliders?: string[]
-  ) =>
-    request<CausalDiscoveryResult>("/run-causal-discovery", {
-      method: "POST",
-      body: JSON.stringify({
-        session_id: sessionId,
-        treatment,
-        outcome,
-        confounders,
-        mediators,
-        colliders,
-      }),
+  deleteSession: (sessionId: string) =>
+    request<{ status: string; message: string }>(`/sessions/${sessionId}`, {
+      method: "DELETE",
     }),
 
-  getCausalDiscovery: (sessionId: string) =>
-    request<CausalDiscoveryResult>(`/session/${sessionId}/causal-discovery`),
+  // ── Causal Discovery (LLM) ──
+  discoverDag: (payload: DAGDiscoveryRequest) =>
+    request<DAGDiscoveryResponse>("/causal-discovery/discover", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
+  // ── DAG Library CRUD ──
+  listDags: () => request<DAGListItem[]>("/causal-discovery/dags"),
+
+  getDag: (dagId: string) => request<SavedDAG>(`/causal-discovery/dags/${dagId}`),
+
+  createDag: (payload: DAGCreateRequest) =>
+    request<SavedDAG>("/causal-discovery/dags", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  verifyAndSaveDag: (payload: DAGVerifyAndSaveRequest) =>
+    request<SavedDAG>("/causal-discovery/dags/verify-and-save", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateDag: (dagId: string, payload: DAGUpdateRequest) =>
+    request<SavedDAG>(`/causal-discovery/dags/${dagId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteDag: (dagId: string) =>
+    request<void>(`/causal-discovery/dags/${dagId}`, { method: "DELETE" }),
+
+  // ── Modeling ──
   runCausalModels: (sessionId: string) =>
-    request<{ status: string }>("/run-causal-models", {
+    request<{ status: string }>("/modeling/run-pipeline", {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId }),
     }),
 
+  // ── Dashboard ──
+  getSessionResults: (sessionId: string) =>
+    request<SessionResults>(`/dashboard/results/${sessionId}`),
+
+  getSessionStatus: (sessionId: string) =>
+    request<{ session_id: string; status: string; has_results: boolean }>(
+      `/dashboard/status/${sessionId}`
+    ),
+
+  // ── Sessions ──
   getSessions: () => request<SessionSummary[]>("/sessions"),
 
-  getSession: (sessionId: string) =>
-    request<SessionResults>(`/session/${sessionId}`),
+  getSessionDetail: (sessionId: string) =>
+    request<{
+      session_id: string;
+      status: string;
+      created_at: string;
+      updated_at: string;
+      dataset_meta: Record<string, unknown> | null;
+      imc_mapping: Record<string, string> | null;
+      column_mapping: Record<string, string> | null;
+      dag_id: string | null;
+      has_results: boolean;
+      result?: Record<string, unknown> | null;
+    }>(`/sessions/${sessionId}`),
 
-  getExplainability: (sessionId: string) =>
-    request<ExplainabilityData>(`/session/${sessionId}/explainability`),
-
+  // ── Detailed Comparison (no backend yet) ──
   getDetailedComparison: (sessionId: string) =>
-    request<DetailedComparison>(`/session/${sessionId}/detailed-comparison`),
+    request<DetailedComparison>(`/sessions/${sessionId}/detailed-comparison`),
 
   getTreatmentBalance: (sessionId: string) =>
-    request<TreatmentBalanceResult[]>(`/session/${sessionId}/treatment-balance`),
+    request<TreatmentBalanceResult[]>(`/sessions/${sessionId}/treatment-balance`),
 };
