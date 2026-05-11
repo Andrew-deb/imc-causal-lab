@@ -16,7 +16,10 @@ export default function StepModelExecution({ onComplete, onBack }: { onComplete:
     setStatus("running");
     try {
       if (sessionId) {
+        // Run main pipeline
         await api.runCausalModels(sessionId);
+        // Run evaluation pipeline sequentially
+        await api.runEvaluation(sessionId);
       } else {
         // Simulate delay for demo
         await new Promise((r) => setTimeout(r, 3000));

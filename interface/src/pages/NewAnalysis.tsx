@@ -13,7 +13,7 @@ import StepModelExecution from "@/components/wizard/StepModelExecution";
 const STEPS = [
   "Data Collection",
   "IMC Categorization",
-  "Causal Identification",
+  "Causal Discovery",
   "Discovery Summary",
   "Generate Results",
 ];

@@ -23,9 +23,9 @@ import { Link } from "react-router-dom";
 
 // Mock data for sessions
 const MOCK_SESSIONS: SessionSummary[] = [
-  { session_id: "session_20260313_ab12", date: "2026-03-13", treatment: "imc_category", outcome: "purchase", status: "completed" },
-  { session_id: "session_20260310_cd34", date: "2026-03-10", treatment: "imc_category", outcome: "conversion", status: "completed" },
-  { session_id: "session_20260308_ef56", date: "2026-03-08", treatment: "channel_type", outcome: "revenue", status: "failed" },
+  { session_id: "session_20260313_ab12", created_at: "2026-03-13T10:00:00Z", updated_at: "2026-03-13T10:10:00Z", status: "completed", has_results: true, has_evaluation: true, dataset_meta: { customers: 12450, campaigns: 28 } },
+  { session_id: "session_20260310_cd34", created_at: "2026-03-10T14:30:00Z", updated_at: "2026-03-10T14:45:00Z", status: "completed", has_results: true, has_evaluation: true, dataset_meta: { customers: 8700, campaigns: 15 } },
+  { session_id: "session_20260308_ef56", created_at: "2026-03-08T09:15:00Z", updated_at: "2026-03-08T09:16:00Z", status: "error", has_results: false, has_evaluation: false, dataset_meta: { customers: 4500, campaigns: 5 } },
 ];
 
 // Mock session detail data
@@ -711,9 +711,9 @@ export default function SessionHistory() {
               <TableHeader>
                 <TableRow className="bg-surface-sunken hover:bg-surface-sunken">
                   <TableHead className="text-[11px] uppercase tracking-wider">Session ID</TableHead>
-                  <TableHead className="text-[11px] uppercase tracking-wider">Date</TableHead>
-                  <TableHead className="text-[11px] uppercase tracking-wider">Treatment</TableHead>
-                  <TableHead className="text-[11px] uppercase tracking-wider">Outcome</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wider">Created</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wider">Customers</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wider">Campaigns</TableHead>
                   <TableHead className="text-[11px] uppercase tracking-wider">Status</TableHead>
                   <TableHead className="w-10"></TableHead>
                 </TableRow>
@@ -726,9 +726,9 @@ export default function SessionHistory() {
                     onClick={() => setSelectedSession(s)}
                   >
                     <TableCell className="font-mono text-xs">{s.session_id}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{s.date}</TableCell>
-                    <TableCell className="text-xs">{s.treatment}</TableCell>
-                    <TableCell className="text-xs">{s.outcome}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{new Date(s.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-xs">{s.dataset_meta?.customers || "N/A"}</TableCell>
+                    <TableCell className="text-xs">{s.dataset_meta?.campaigns || "N/A"}</TableCell>
                     <TableCell>
                       <StatusPill
                         tone={s.status === "completed" ? "success" : s.status === "failed" ? "danger" : "info"}

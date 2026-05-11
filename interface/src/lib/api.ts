@@ -144,19 +144,78 @@ export interface DAGUpdateRequest {
 
 // ─── Dashboard / Results Types ──────────────────────────────────────
 
+export interface UpliftSegments {
+  persuadables: number;
+  sure_things: number;
+  sleeping_dogs: number;
+  lost_causes: number;
+}
+
+export interface ModelResult {
+  model_name: string;
+  ate: number;
+  att: number;
+  ate_ci?: number[];
+  ite_array?: number[];
+  cate_by_segment?: Record<string, Record<string, number>>;
+  uplift_segments?: UpliftSegments;
+  feature_importances?: Record<string, number>;
+}
+
+export interface ChannelResult {
+  channel_name: string;
+  model_results: Record<string, ModelResult>;
+  consensus_ate: number;
+  consensus_att: number;
+  agreement_score: number;
+  best_model: string;
+  confidence_level: "good" | "weak" | "insufficient";
+}
+
+export interface CrossModelComparison {
+  metrics: Record<string, any>[];
+}
+
+export interface AssociativeComparison {
+  estimated_effect: Record<string, string>;
+  confounding_correction: Record<string, string>;
+  individual_targeting: Record<string, string>;
+  interpretation: Record<string, string>;
+}
+
+export interface ChannelSummary {
+  channel: string;
+  consensus_ate: number;
+  best_model: string;
+  agreement_score: number;
+  persuadables_pct: number;
+  confidence_level: string;
+}
+
+export interface TreatmentBalanceResult {
+  imc_category: string;
+  treated_count: number;
+  control_count: number;
+  treated_pct: number;
+  status: "good" | "warning" | "insufficient" | "not_in_dataset";
+  message: string;
+}
+
 export interface SessionResults {
-  ATE: number;
-  ATT: number;
-  customer_count: number;
+  session_id: string;
+  channel_ranking: {
+    rank: number;
+    channel: string;
+    consensus_ate: number;
+    confidence_level: string;
+  }[];
   campaign_type_count: number;
-  channel_ranking: { channel: string; effect: number }[];
-  uplift_segments: {
-    persuadables: number;
-    sure_things: number;
-    sleeping_dogs: number;
-    lost_causes: number;
-  };
-  cate_analysis: Record<string, Record<string, number>>;
+  channel_data: Record<string, ChannelResult>;
+  balance_results: TreatmentBalanceResult[];
+  cross_model_comparison: Record<string, CrossModelComparison>;
+  associative_vs_causal: Record<string, AssociativeComparison>;
+  channel_summary: ChannelSummary[];
+  imc_mapping: Record<string, string>;
 }
 
 export interface CurveData {
@@ -179,56 +238,41 @@ export interface ModelEvaluationResult {
   metrics: EvaluationMetrics;
 }
 
-// ─── Session Types (for Session History — no backend yet, mock-compatible) ──
-
-export interface SessionSummary {
-  session_id: string;
-  date: string;
-  treatment: string;
-  outcome: string;
-  status: "completed" | "in_progress" | "failed";
+export interface ChannelEvaluationResult {
+  channel_name: string;
+  model_evaluations: Record<string, ModelEvaluationResult>;
 }
 
-export interface CrossModelComparison {
-  metrics: {
-    metric: string;
-    t_learner: number | string;
-    dr_learner: number | string;
-    causal_forest: number | string;
-    consensus: number | string;
+export interface ChannelDescriptiveStats {
+  channel_name: string;
+  n_treated: number;
+  n_control: number;
+  stats: {
+    variable: string;
+    treated_mean: number;
+    control_mean: number;
+    std_diff: number;
   }[];
 }
 
-export interface AssociativeComparison {
-  channel: string;
-  associative_effect: number;
-  causal_ate: number;
-  overestimation: string;
-  confounding_correction: string;
+export interface EvaluationResponse {
+  session_id: string;
+  channel_evaluations: Record<string, ChannelEvaluationResult>;
+  descriptive_statistics: Record<string, ChannelDescriptiveStats>;
+  model_performance_summary: Record<string, any>[];
+  best_model_per_channel: Record<string, string>;
 }
 
-export interface TreatmentBalanceResult {
-  imc_category: string;
-  treated_count: number;
-  control_count: number;
-  treated_pct: number;
-  status: "good" | "warning" | "insufficient" | "not_in_dataset";
-  message: string;
-}
+// ─── Session Types ──
 
-export interface ChannelSummary {
-  channel: string;
-  consensus_ate: number;
-  best_model: string;
-  agreement_score: number;
-  persuadables_pct: number;
-  confidence_level: "good" | "weak" | "insufficient";
-}
-
-export interface DetailedComparison {
-  cross_model: Record<string, CrossModelComparison>;
-  associative_vs_causal: AssociativeComparison[];
-  channel_summary: ChannelSummary[];
+export interface SessionSummary {
+  session_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  dataset_meta?: Record<string, any>;
+  has_results: boolean;
+  has_evaluation: boolean;
 }
 
 // ─── API Functions ──────────────────────────────────────────────────
@@ -310,9 +354,18 @@ export const api = {
       body: JSON.stringify({ session_id: sessionId }),
     }),
 
+  runEvaluation: (sessionId: string) =>
+    request<EvaluationResponse>("/modeling/evaluate", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId }),
+    }),
+
   // ── Dashboard ──
   getSessionResults: (sessionId: string) =>
     request<SessionResults>(`/dashboard/results/${sessionId}`),
+
+  getEvaluationResults: (sessionId: string) =>
+    request<EvaluationResponse>(`/dashboard/evaluation/${sessionId}`),
 
   getSessionStatus: (sessionId: string) =>
     request<{ session_id: string; status: string; has_results: boolean }>(

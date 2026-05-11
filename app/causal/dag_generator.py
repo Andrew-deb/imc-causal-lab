@@ -17,6 +17,66 @@ from collections import defaultdict
 logger = logging.getLogger(__name__)
 
 
+def enforce_causal_rules(
+    edges: list[dict], 
+    roles: dict, 
+    treatment: str, 
+    outcome: str
+) -> list[dict]:
+    """
+    Programmatically enforce causal graph rules based on variable roles.
+    This guarantees that the structural definitions of confounders, mediators, 
+    colliders, and instrumental variables are strictly obeyed.
+    """
+    
+    # Helper to check if edge exists
+    def _edge_exists(src: str, tgt: str) -> bool:
+        return any(e.get("source") == src and e.get("target") == tgt for e in edges)
+
+    # Helper to add mandatory edge
+    def _add_edge(src: str, tgt: str, reason: str):
+        if not _edge_exists(src, tgt):
+            edges.append({
+                "source": src,
+                "target": tgt,
+                "confidence": 1.0,
+                "reasoning": reason
+            })
+            
+    # Helper to remove forbidden edge
+    def _remove_edge(src: str, tgt: str):
+        nonlocal edges
+        edges = [e for e in edges if not (e.get("source") == src and e.get("target") == tgt)]
+
+    confounders = roles.get("confounders", [])
+    mediators = roles.get("mediators", [])
+    colliders = roles.get("colliders", [])
+    instrumentals = roles.get("instrumental_variables", [])
+
+    # 1. Confounders: C -> T and C -> Y
+    for c in confounders:
+        _add_edge(c, treatment, "Programmatically enforced: Confounder must affect treatment.")
+        _add_edge(c, outcome, "Programmatically enforced: Confounder must affect outcome.")
+
+    # 2. Mediators: T -> M and M -> Y
+    for m in mediators:
+        _add_edge(treatment, m, "Programmatically enforced: Treatment must affect mediator.")
+        _add_edge(m, outcome, "Programmatically enforced: Mediator must affect outcome.")
+
+    # 3. Colliders: T -> Col and Y -> Col
+    for col in colliders:
+        _add_edge(treatment, col, "Programmatically enforced: Treatment must affect collider.")
+        _add_edge(outcome, col, "Programmatically enforced: Outcome must affect collider.")
+
+    # 4. Instrumental Variables: Z -> T and Z -/-> Y
+    for z in instrumentals:
+        _add_edge(z, treatment, "Programmatically enforced: Instrument must affect treatment.")
+        _remove_edge(z, outcome)
+
+    return edges
+
+
+
 def build_adjacency_list(edges: list[dict], variables: list[str]) -> dict[str, list[str]]:
     """
     Convert a list of edge dicts into an adjacency list.

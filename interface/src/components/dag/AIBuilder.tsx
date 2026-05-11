@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,10 +32,52 @@ const STEPS = [
 
 export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessionId }: Props) {
   const { toast } = useToast();
+  
+  // Fetch session details if sessionId is provided
+  const { data: sessionData } = useQuery({
+    queryKey: ["sessionDetail", sessionId],
+    queryFn: () => sessionId ? api.getSessionDetail(sessionId) : Promise.reject("No session"),
+    enabled: !!sessionId,
+  });
+
+  const availableColumns = useMemo(() => {
+    if (!sessionData?.dataset_meta) return [];
+    const meta = sessionData.dataset_meta as any;
+    const allCols = [
+      ...(meta.customers_columns || []),
+      ...(meta.transactions_columns || []),
+      ...(meta.campaigns_columns || [])
+    ];
+    // Filter out IDs and dates (mimicking backend logic)
+    const skipPatterns = ["_id", "session", "transaction_id", "imc_category", "email", "phone", "full_name", "name", "campaign_name", "registration_date", "start_date", "end_date"];
+    return Array.from(new Set(allCols)).filter((col: any) => {
+      const lower = col.toLowerCase();
+      return !skipPatterns.some(pat => lower.includes(pat));
+    });
+  }, [sessionData]);
+
   const [name, setName] = useState("Marketing Funnel v1");
   const [variables, setVariables] = useState<string[]>(["age", "income", "engagement"]);
   const [treatment, setTreatment] = useState("IMC_Exposure");
   const [outcome, setOutcome] = useState("purchase");
+
+  // Auto-populate from dataset if available
+  useEffect(() => {
+    if (availableColumns.length > 0) {
+      const mappedOutcome = (sessionData?.column_mapping as any)?.outcome || "purchase";
+      
+      // Select outcome if it exists in columns, else default
+      if (availableColumns.includes(mappedOutcome)) {
+        setOutcome(mappedOutcome);
+      } else if (availableColumns.includes("purchase")) {
+        setOutcome("purchase");
+      }
+      
+      // Pre-select all filtered columns except treatment and outcome as variables
+      const initialVars = availableColumns.filter(c => c !== "IMC_Exposure" && c !== "imc_category" && c !== mappedOutcome && c !== "purchase");
+      setVariables(initialVars);
+    }
+  }, [availableColumns, sessionData]);
 
   const [loading, setLoading] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
@@ -143,7 +189,7 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="dag-name" className="text-sm">DAG Name</Label>
                 <Input id="dag-name" value={name} onChange={(e) => setName(e.target.value)} className="h-9" />
@@ -154,13 +200,50 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
               </div>
               <div className="space-y-1.5 sm:col-span-2">
                 <Label htmlFor="dag-outcome" className="text-sm">Outcome</Label>
-                <Input id="dag-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} className="h-9 font-mono text-sm" />
+                {availableColumns.length > 0 ? (
+                  <Select value={outcome} onValueChange={setOutcome}>
+                    <SelectTrigger className="h-9 font-mono text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {availableColumns.map(col => (
+                        <SelectItem key={col} value={col}>{col}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input id="dag-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} className="h-9 font-mono text-sm" />
+                )}
               </div>
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm">Other Variables</Label>
-              <p className="text-xs text-muted-foreground">Type a variable name and press Enter (or paste comma-separated values).</p>
-              <TagInput values={variables} onChange={setVariables} placeholder="e.g. age, income, engagement…" />
+              {availableColumns.length > 0 ? (
+                <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2 bg-muted/20">
+                  <p className="text-xs text-muted-foreground mb-2">Select variables to include in causal discovery (IDs and Dates are pre-filtered).</p>
+                  {availableColumns.filter(c => c !== treatment && c !== outcome).map(col => (
+                    <div key={col} className="flex items-center space-x-2">
+                      <Checkbox 
+                        id={`var-${col}`} 
+                        checked={variables.includes(col)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setVariables(prev => [...prev, col]);
+                          } else {
+                            setVariables(prev => prev.filter(v => v !== col));
+                          }
+                        }}
+                      />
+                      <label htmlFor={`var-${col}`} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 font-mono">
+                        {col}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">Type a variable name and press Enter (or paste comma-separated values).</p>
+                  <TagInput values={variables} onChange={setVariables} placeholder="e.g. age, income, engagement…" />
+                </>
+              )}
             </div>
             {loading && (
               <div className="space-y-2 rounded-lg border bg-muted/30 p-4">
@@ -227,11 +310,21 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
               domain_expertises={domains}
             />
           </div>
-          <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
+            <div className="flex items-center gap-2 flex-1">
+              <Label htmlFor="dag-save-name" className="text-sm whitespace-nowrap">DAG Name</Label>
+              <Input
+                id="dag-save-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="h-9 font-medium flex-1"
+                placeholder="Enter a name for this DAG…"
+              />
+            </div>
             <Button variant="outline" onClick={runDiscovery} disabled={loading} className="gap-1.5">
               <RefreshCw className="h-4 w-4" /> Regenerate
             </Button>
-            <Button id="dag-save-btn" onClick={handleSave} disabled={saving} className="gap-1.5">
+            <Button id="dag-save-btn" onClick={handleSave} disabled={saving || !name.trim()} className="gap-1.5">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save to Library
             </Button>

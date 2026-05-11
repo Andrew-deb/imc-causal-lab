@@ -26,6 +26,7 @@ from app.causal.dag_generator import (
     build_adjacency_list,
     validate_dag,
     extract_roles,
+    enforce_causal_rules,
 )
 from app.utils.progress import PipelineTracker
 
@@ -52,7 +53,7 @@ async def run_dag_discovery(
     """
     llm_calls = 0
 
-    with PipelineTracker("CAUSAL DISCOVERY (DAG)", total_steps=6) as tracker:
+    with PipelineTracker("CAUSAL DISCOVERY (DAG)", total_steps=7) as tracker:
         # ── Step 1: Filter variables 
         with tracker.step(1, "Filtering variables") as s:
             # Remove obviously non-causal columns (IDs, dates, etc.)
@@ -99,14 +100,23 @@ async def run_dag_discovery(
             llm_calls += 1
             s.detail(f"{len(raw_edges)} raw edges")
 
-        # ── Step 5: Build and validate DAG 
-        with tracker.step(5, "Validating & removing cycles") as s:
+        # ── Step 5: Enforce causal structural rules
+        with tracker.step(5, "Enforcing causal structural rules") as s:
+            # Guarantee correct edge topology per role:
+            # Confounders: C→T, C→Y | Mediators: T→M, M→Y
+            # Colliders: T→Col, Y→Col | Instruments: Z→T, remove Z→Y
+            raw_edges = enforce_causal_rules(raw_edges, role_suggestions, treatment, outcome)
+            n_enforced = len(raw_edges)
+            s.detail(f"{n_enforced} edges after rule enforcement")
+
+        # ── Step 6: Build and validate DAG 
+        with tracker.step(6, "Validating & removing cycles") as s:
             adj = build_adjacency_list(raw_edges, all_vars)
             adj = validate_dag(adj, raw_edges)
             s.detail("DAG valid")
 
-        # ── Step 6: Extract roles from graph topology 
-        with tracker.step(6, "Extracting graph topology roles") as s:
+        # ── Step 7: Extract roles from graph topology 
+        with tracker.step(7, "Extracting graph topology roles") as s:
             graph_roles = extract_roles(adj, treatment, outcome)
 
             # Merge LLM-suggested roles with graph-extracted roles

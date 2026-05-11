@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.modeling_schema import PipelineResult
+from app.schemas.modeling_schema import PipelineResult, EvaluationResponse
 from app.utils.error_handling import require_session
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,24 @@ async def get_results(session_id: str):
         )
 
     return result
+
+
+@router.get("/evaluation/{session_id}", response_model=EvaluationResponse)
+async def get_evaluation(session_id: str):
+    """
+    Retrieve evaluation metrics for the dashboard.
+    Must have run the evaluation first via POST /modeling/evaluate.
+    """
+    session = require_session(session_id)
+
+    eval_result = session.get("evaluation_result")
+    if not eval_result:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No evaluation results yet. Status: {session.get('status', 'unknown')}"
+        )
+
+    return eval_result
 
 
 @router.get("/status/{session_id}")

@@ -71,3 +71,28 @@ async def delete_session(session_id: str):
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     
     return {"status": "success", "message": f"Session {session_id} deleted successfully"}
+
+
+@router.get("/{session_id}/treatment-balance")
+async def get_treatment_balance(session_id: str):
+    """
+    Retrieve treatment balance results for a session.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    result = session.get("result")
+    if not result:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No results yet. Status: {session.get('status', 'unknown')}"
+        )
+
+    # Handle Pydantic model vs dict
+    if hasattr(result, "model_dump"):
+        result_dict = result.model_dump()
+    else:
+        result_dict = result
+
+    return result_dict.get("balance_results", [])

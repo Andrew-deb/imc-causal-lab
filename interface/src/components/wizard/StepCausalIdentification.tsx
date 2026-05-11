@@ -48,7 +48,7 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Causal Identification</CardTitle>
+          <CardTitle className="text-base">Causal Discovery</CardTitle>
           <p className="text-sm text-muted-foreground">Select or create the DAG that defines the causal structure for this analysis.</p>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">

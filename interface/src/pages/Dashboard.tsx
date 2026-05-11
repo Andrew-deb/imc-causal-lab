@@ -1,94 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, SessionResults, TreatmentBalanceResult } from "@/lib/api";
+import { api, SessionResults, TreatmentBalanceResult, UpliftSegments } from "@/lib/api";
 import { useSession } from "@/contexts/SessionContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 import { TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap, ShieldAlert } from "lucide-react";
-import DetailedComparison from "@/components/dashboard/DetailedComparison";
+import ModelEvaluation from "@/components/dashboard/ModelEvaluation";
 import { PageHeader } from "@/components/console/PageHeader";
 import { StatusPill } from "@/components/console/StatusPill";
-
-const MOCK_TREATMENT_BALANCE: TreatmentBalanceResult[] = [
-  { imc_category: "Advertising", treated_count: 120, control_count: 30, treated_pct: 0.8, status: "warning", message: "Skewed treatment/control split — confounding risk." },
-  { imc_category: "Promotion", treated_count: 200, control_count: 180, treated_pct: 0.53, status: "good", message: "Healthy balance." },
-  { imc_category: "Direct Marketing", treated_count: 15, control_count: 5, treated_pct: 0.75, status: "insufficient", message: "Too few control samples for reliable estimation." },
-  { imc_category: "Public Relations", treated_count: 90, control_count: 95, treated_pct: 0.49, status: "good", message: "Healthy balance." },
-];
-
-
-const MOCK_CHANNEL_DATA: Record<string, {
-  ate: number;
-  att: number;
-  customer_count: number;
-  confidence_level: "good" | "weak" | "insufficient";
-  uplift_segments: { persuadables: number; sure_things: number; sleeping_dogs: number; lost_causes: number };
-  cate_analysis: Record<string, Record<string, number>>;
-}> = {
-  Advertising: {
-    ate: 0.20, att: 0.18, customer_count: 1650,
-    confidence_level: "insufficient",
-    uplift_segments: { persuadables: 0.21, sure_things: 0.33, sleeping_dogs: 0.12, lost_causes: 0.34 },
-    cate_analysis: {
-      age: { "18-25": 0.28, "26-35": 0.22, "36-45": 0.18, "46-55": 0.12, "56+": 0.06 },
-      region: { North: 0.22, South: 0.16, East: 0.20, West: 0.15 },
-      income: { Low: 0.10, Medium: 0.18, High: 0.26 },
-    },
-  },
-  Promotion: {
-    ate: 0.15, att: 0.13, customer_count: 1420,
-    confidence_level: "good",
-    uplift_segments: { persuadables: 0.17, sure_things: 0.38, sleeping_dogs: 0.10, lost_causes: 0.35 },
-    cate_analysis: {
-      age: { "18-25": 0.20, "26-35": 0.17, "36-45": 0.14, "46-55": 0.10, "56+": 0.05 },
-      region: { North: 0.16, South: 0.12, East: 0.15, West: 0.11 },
-      income: { Low: 0.08, Medium: 0.14, High: 0.20 },
-    },
-  },
-  "Direct Marketing": {
-    ate: 0.10, att: 0.09, customer_count: 1280,
-    confidence_level: "good",
-    uplift_segments: { persuadables: 0.13, sure_things: 0.35, sleeping_dogs: 0.14, lost_causes: 0.38 },
-    cate_analysis: {
-      age: { "18-25": 0.14, "26-35": 0.12, "36-45": 0.09, "46-55": 0.07, "56+": 0.04 },
-      region: { North: 0.11, South: 0.08, East: 0.10, West: 0.07 },
-      income: { Low: 0.05, Medium: 0.09, High: 0.14 },
-    },
-  },
-  "Public Relations": {
-    ate: 0.05, att: 0.04, customer_count: 980,
-    confidence_level: "good",
-    uplift_segments: { persuadables: 0.06, sure_things: 0.30, sleeping_dogs: 0.18, lost_causes: 0.46 },
-    cate_analysis: {
-      age: { "18-25": 0.08, "26-35": 0.06, "36-45": 0.04, "46-55": 0.03, "56+": 0.02 },
-      region: { North: 0.06, South: 0.04, East: 0.05, West: 0.03 },
-      income: { Low: 0.03, Medium: 0.05, High: 0.07 },
-    },
-  },
-};
-
-const CHANNEL_RANKING = [
-  { channel: "Advertising", effect: 0.20 },
-  { channel: "Promotion", effect: 0.15 },
-  { channel: "Direct Marketing", effect: 0.10 },
-  { channel: "Public Relations", effect: 0.05 },
-];
-
-const MOCK_DATA: SessionResults = {
-  ATE: 0.20,
-  ATT: 0.18,
-  customer_count: 2000,
-  campaign_type_count: 10,
-  channel_ranking: CHANNEL_RANKING,
-  uplift_segments: MOCK_CHANNEL_DATA["Advertising"].uplift_segments,
-  cate_analysis: MOCK_CHANNEL_DATA["Advertising"].cate_analysis,
-};
 
 const UPLIFT_SEGMENTS = [
   { key: "persuadables", label: "Persuadables", bg: "hsl(90, 30%, 78%)", icon: Crosshair, desc: "Customers who will convert only if targeted.", dark: false, animClass: "uplift-icon-target" },
@@ -97,7 +22,6 @@ const UPLIFT_SEGMENTS = [
   { key: "sleeping_dogs", label: "Sleeping Dogs", bg: "hsl(215, 25%, 45%)", icon: MoonStar, desc: "Customers who will convert only if not targeted.", dark: true, animClass: "uplift-icon-moon" },
 ];
 
-const CHANNELS = Object.keys(MOCK_CHANNEL_DATA);
 
 function ConfidenceBadge({ level }: { level: "good" | "weak" | "insufficient" }) {
   if (level === "good") return null;
@@ -136,8 +60,8 @@ function MetricCard({ title, value, icon: Icon, format, confidenceLevel }: {
   );
 }
 
-function ChannelLabel({ channel }: { channel: string }) {
-  const conf = MOCK_CHANNEL_DATA[channel]?.confidence_level;
+function ChannelLabel({ channel, data }: { channel: string, data: SessionResults }) {
+  const conf = data.channel_data[channel]?.confidence_level;
   return (
     <span>
       {channel}
@@ -147,19 +71,20 @@ function ChannelLabel({ channel }: { channel: string }) {
   );
 }
 
-function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }: {
+function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar, data }: {
   selectedChannel: string;
   onChannelChange: (ch: string) => void;
   cateVar: string;
   setCateVar: (v: string) => void;
+  data: SessionResults;
 }) {
-  const channelData = MOCK_CHANNEL_DATA[selectedChannel];
-  const cateData = channelData.cate_analysis[cateVar]
-    ? Object.entries(channelData.cate_analysis[cateVar]).map(([name, value]) => ({ name, value }))
+  const channelData = data.channel_data[selectedChannel];
+  const cateData = channelData?.model_results[channelData.best_model]?.cate_by_segment?.[cateVar]
+    ? Object.entries(channelData.model_results[channelData.best_model].cate_by_segment[cateVar]).map(([name, value]) => ({ name, value }))
     : [];
 
   const getBarOpacity = (channel: string) => {
-    const conf = MOCK_CHANNEL_DATA[channel]?.confidence_level;
+    const conf = data.channel_data[channel]?.confidence_level;
     if (conf === "insufficient") return 0.4;
     if (conf === "weak") return 0.7;
     return 1;
@@ -167,7 +92,7 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
 
   const renderCustomYAxisTick = (props: any) => {
     const { x, y, payload } = props;
-    const conf = MOCK_CHANNEL_DATA[payload.value]?.confidence_level;
+    const conf = data.channel_data[payload.value]?.confidence_level;
     const icon = conf === "insufficient" ? " ⚠" : conf === "weak" ? " ⚡" : "";
     return (
       <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill="currentColor">
@@ -179,10 +104,10 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
   const customTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
     const entry = payload[0].payload;
-    const conf = MOCK_CHANNEL_DATA[entry.channel]?.confidence_level;
+    const conf = data.channel_data[entry.channel]?.confidence_level;
     return (
       <div className="rounded-lg border bg-card p-2 text-xs shadow-md" style={{ borderColor: "hsl(var(--border))" }}>
-        <p className="font-medium">{entry.channel}: {(entry.effect * 100).toFixed(1)}%</p>
+        <p className="font-medium">{entry.channel}: {(entry.consensus_ate * 100).toFixed(1)}%</p>
         {conf === "insufficient" && (
           <p className="text-destructive mt-1">⚠ Insufficient treatment/control variation — results may be unreliable</p>
         )}
@@ -193,13 +118,26 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
     );
   };
 
+  if (!channelData) return null;
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard title={`${selectedChannel} — ATE`} value={channelData.ate} icon={TrendingUp} format="percent" confidenceLevel={channelData.confidence_level} />
-        <MetricCard title={`${selectedChannel} — ATT`} value={channelData.att} icon={Target} format="percent" confidenceLevel={channelData.confidence_level} />
-        <MetricCard title={`${selectedChannel} — Customers`} value={channelData.customer_count} icon={Users} format="number" />
-        <MetricCard title="Campaign Types" value={10} icon={Layers} format="number" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard title={`${selectedChannel} — ATE`} value={channelData.consensus_ate} icon={TrendingUp} format="percent" confidenceLevel={channelData.confidence_level} />
+        <MetricCard title={`${selectedChannel} — ATT`} value={channelData.consensus_att} icon={Target} format="percent" confidenceLevel={channelData.confidence_level} />
+        <MetricCard title={`${selectedChannel} — Customers`} value={data.balance_results.find(b => b.imc_category === selectedChannel)?.treated_count! + data.balance_results.find(b => b.imc_category === selectedChannel)?.control_count! || 0} icon={Users} format="number" />
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Best Model</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold">🏆 {channelData.best_model}</div>
+            <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+              Highest Uplift AUC
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -210,7 +148,7 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
           <CardContent>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart
-                data={CHANNEL_RANKING}
+                data={data.channel_ranking}
                 layout="vertical"
                 margin={{ left: 20 }}
                 onClick={(state) => {
@@ -224,8 +162,8 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
                 <XAxis type="number" tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
                 <YAxis dataKey="channel" type="category" tick={renderCustomYAxisTick} width={140} />
                 <Tooltip content={customTooltip} />
-                <Bar dataKey="effect" radius={[0, 4, 4, 0]}>
-                  {CHANNEL_RANKING.map((entry) => (
+                <Bar dataKey="consensus_ate" radius={[0, 4, 4, 0]}>
+                  {data.channel_ranking.map((entry) => (
                     <Cell
                       key={entry.channel}
                       fill={entry.channel === selectedChannel
@@ -248,7 +186,7 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.keys(channelData.cate_analysis).map((v) => (
+                {Object.keys(channelData.model_results[channelData.best_model]?.cate_by_segment || {}).map((v) => (
                   <SelectItem key={v} value={v} className="text-xs capitalize">
                     {v}
                   </SelectItem>
@@ -308,7 +246,7 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
                 <div className="grid grid-cols-2 gap-[2px] flex-1">
                   {UPLIFT_SEGMENTS.slice(0, 2).map((seg, index) => {
                     const SegIcon = seg.icon;
-                    const val = channelData.uplift_segments[seg.key as keyof typeof channelData.uplift_segments];
+                    const val = channelData.model_results[channelData.best_model]?.uplift_segments?.[seg.key as keyof UpliftSegments] || 0;
                     const textColor = seg.dark ? "hsl(210, 20%, 95%)" : "hsl(220, 25%, 10%)";
                     const subColor = seg.dark ? "hsl(210, 15%, 75%)" : "hsl(220, 15%, 40%)";
                     const iconColor = seg.dark ? "hsl(210, 20%, 85%)" : "hsl(220, 20%, 20%)";
@@ -335,7 +273,7 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
                 <div className="grid grid-cols-2 gap-[2px] flex-1">
                   {UPLIFT_SEGMENTS.slice(2, 4).map((seg, index) => {
                     const SegIcon = seg.icon;
-                    const val = channelData.uplift_segments[seg.key as keyof typeof channelData.uplift_segments];
+                    const val = channelData.model_results[channelData.best_model]?.uplift_segments?.[seg.key as keyof UpliftSegments] || 0;
                     const textColor = seg.dark ? "hsl(210, 20%, 95%)" : "hsl(220, 25%, 10%)";
                     const subColor = seg.dark ? "hsl(210, 15%, 75%)" : "hsl(220, 15%, 40%)";
                     const iconColor = seg.dark ? "hsl(210, 20%, 85%)" : "hsl(220, 20%, 20%)";
@@ -367,22 +305,34 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar }:
 export default function Dashboard() {
   const { sessionId } = useSession();
   const [cateVar, setCateVar] = useState("age");
-  const [selectedChannel, setSelectedChannel] = useState(CHANNEL_RANKING[0].channel);
+  const [selectedChannel, setSelectedChannel] = useState("");
 
-  const { isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["session-results", sessionId],
-    queryFn: () => (sessionId ? api.getSessionResults(sessionId) : Promise.resolve(MOCK_DATA)),
-    placeholderData: MOCK_DATA,
+    queryFn: () => (sessionId ? api.getSessionResults(sessionId) : Promise.reject("No session ID")),
+    enabled: !!sessionId,
   });
 
   const { data: balance } = useQuery({
     queryKey: ["treatment-balance", sessionId],
-    queryFn: () =>
-      sessionId
-        ? api.getTreatmentBalance(sessionId).catch(() => MOCK_TREATMENT_BALANCE)
-        : Promise.resolve(MOCK_TREATMENT_BALANCE),
-    placeholderData: MOCK_TREATMENT_BALANCE,
+    queryFn: () => sessionId ? api.getTreatmentBalance(sessionId) : Promise.reject("No session ID"),
+    enabled: !!sessionId,
   });
+
+  const { data: evaluationData, isLoading: isLoadingEval } = useQuery({
+    queryKey: ["evaluation-results", sessionId],
+    queryFn: () => (sessionId ? api.getEvaluationResults(sessionId) : Promise.reject("No session ID")),
+    enabled: !!sessionId,
+  });
+
+  const channels = data ? Object.keys(data.channel_data) : [];
+  
+  // Auto-select first channel
+  useEffect(() => {
+    if (channels.length > 0 && !selectedChannel) {
+      setSelectedChannel(channels[0]);
+    }
+  }, [channels, selectedChannel]);
 
   const flagged = (balance ?? []).filter(
     (b) =>
@@ -429,9 +379,9 @@ export default function Dashboard() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {CHANNELS.map((ch) => (
+              {channels.map((ch) => (
                 <SelectItem key={ch} value={ch} className="text-sm">
-                  <ChannelLabel channel={ch} />
+                  <ChannelLabel channel={ch} data={data!} />
                 </SelectItem>
               ))}
             </SelectContent>
@@ -467,20 +417,33 @@ export default function Dashboard() {
       <Tabs defaultValue={new URLSearchParams(window.location.search).get("tab") || "overview"}>
         <TabsList className="tabs-underline">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="comparison">Model Comparison</TabsTrigger>
+          <TabsTrigger value="evaluation">Model Evaluation</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-5">
-          <OverviewView
+          {data && <OverviewView
             selectedChannel={selectedChannel}
             onChannelChange={setSelectedChannel}
             cateVar={cateVar}
             setCateVar={setCateVar}
-          />
+            data={data}
+          />}
         </TabsContent>
 
-        <TabsContent value="comparison" className="mt-5">
-          <DetailedComparison />
+        <TabsContent value="evaluation" className="mt-5">
+          {data && evaluationData && (
+            <ModelEvaluation 
+              selectedChannel={selectedChannel} 
+              onChannelChange={setSelectedChannel}
+              data={data}
+              evaluationData={evaluationData}
+            />
+          )}
+          {isLoadingEval && (
+             <div className="flex justify-center py-10">
+               <Skeleton className="h-80 w-full" />
+             </div>
+          )}
         </TabsContent>
       </Tabs>
     </div>
