@@ -29,6 +29,19 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
     setMode("existing");
   };
 
+  const attachAndNext = async (saved: SavedDAG) => {
+    setPickedId(saved.dag_id);
+    setSelectedDagId(saved.dag_id);
+    if (sessionId) {
+      try {
+        await api.attachDagToSession(sessionId, saved.dag_id);
+      } catch (err) {
+        console.error("Failed to attach DAG to session:", err);
+      }
+    }
+    onNext();
+  };
+
   const choose = (id: string) => {
     setPickedId(id);
     setSelectedDagId(id);
@@ -53,7 +66,7 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
         <Button variant="ghost" size="sm" onClick={() => setMode(null)} className="gap-1">
           <ArrowLeft className="h-4 w-4" /> Choose different option
         </Button>
-        <AIBuilder saveDag={save} onSaved={(d) => { handleAttach(d); onNext(); }} embedded sessionId={sessionId} />
+        <AIBuilder saveDag={save} onSaved={attachAndNext} embedded sessionId={sessionId} />
       </div>
     );
   }

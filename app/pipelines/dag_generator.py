@@ -60,7 +60,7 @@ async def run_dag_discovery(
             skip_patterns = [
                 "_id", "session", "transaction_id", "imc_category",
                 "email", "phone", "full_name", "name", "campaign_name",
-                "registration_date", "start_date", "end_date",
+                "registration_date", "start_date", "end_date", "quantity"
             ]
             variables = [
                 col for col in all_columns
