@@ -213,9 +213,7 @@ export interface SessionResults {
   channel_data: Record<string, ChannelResult>;
   balance_results: TreatmentBalanceResult[];
   cross_model_comparison: Record<string, CrossModelComparison>;
-  associative_vs_causal: Record<string, AssociativeComparison>;
   channel_summary: ChannelSummary[];
-  imc_mapping: Record<string, string>;
 }
 
 export interface CurveData {
@@ -261,6 +259,7 @@ export interface EvaluationResponse {
   descriptive_statistics: Record<string, ChannelDescriptiveStats>;
   model_performance_summary: Record<string, any>[];
   best_model_per_channel: Record<string, string>;
+  associative_vs_causal: Record<string, AssociativeComparison>;
 }
 
 // ─── Session Types ──
@@ -273,6 +272,24 @@ export interface SessionSummary {
   dataset_meta?: Record<string, any>;
   has_results: boolean;
   has_evaluation: boolean;
+}
+
+export interface SessionDetailResponse extends SessionSummary {
+  imc_mapping?: Record<string, string>;
+  column_mapping?: Record<string, string>;
+  dag_id?: string;
+  dataset_roles?: Record<string, any>;
+  result?: SessionResults;
+  evaluation_result?: EvaluationResponse;
+}
+
+export interface DataPreviewResponse {
+  session_id: string;
+  datasets: Record<string, {
+    headers: string[];
+    rows: any[][];
+    total_rows: number;
+  }>;
 }
 
 // ─── API Functions ──────────────────────────────────────────────────
@@ -313,6 +330,18 @@ export const api = {
     request<{ status: string; message: string }>(`/sessions/${sessionId}`, {
       method: "DELETE",
     }),
+
+  getSessionDetail: (sessionId: string) =>
+    request<SessionDetailResponse>(`/sessions/${sessionId}`),
+
+  attachDagToSession: (sessionId: string, dagId: string) =>
+    request<{ status: string; session_id: string; dag_id: string }>(`/sessions/${sessionId}/attach-dag`, {
+      method: "PATCH",
+      body: JSON.stringify({ dag_id: dagId }),
+    }),
+
+  getDataPreview: (sessionId: string, rows: number = 5) =>
+    request<DataPreviewResponse>(`/sessions/${sessionId}/data-preview?rows=${rows}`),
 
   // ── Causal Discovery (LLM) ──
   discoverDag: (payload: DAGDiscoveryRequest) =>

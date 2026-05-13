@@ -8,13 +8,31 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Sparkles, RefreshCw, Save, Loader2, ArrowLeft, Zap } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Sparkles, RefreshCw, Save, Loader2, ArrowLeft, Zap, Maximize2 } from "lucide-react";
 import TagInput from "./TagInput";
 import DAGCanvas, { edgeKey } from "./DAGCanvas";
 import VariableRolesPanel from "./VariableRolesPanel";
 import EdgeReasoningSheet from "./EdgeReasoningSheet";
 import { discoverDAG, type CausalEdgeFull, type SavedDAG, type VariableRoles } from "@/lib/dag-store";
 import { useToast } from "@/hooks/use-toast";
+import { useHistory } from "@/hooks/useHistory";
 
 interface Props {
   onSaved: (dag: SavedDAG) => void;
@@ -34,10 +52,11 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
   const { toast } = useToast();
   
   // Fetch session details if sessionId is provided
-  const { data: sessionData } = useQuery({
+  const { data: sessionData, isLoading: isLoadingSession } = useQuery({
     queryKey: ["sessionDetail", sessionId],
     queryFn: () => sessionId ? api.getSessionDetail(sessionId) : Promise.reject("No session"),
     enabled: !!sessionId,
+    refetchOnWindowFocus: false, // Prevent background refetches from resetting state
   });
 
   const availableColumns = useMemo(() => {
@@ -57,13 +76,29 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
   }, [sessionData]);
 
   const [name, setName] = useState("Marketing Funnel v1");
-  const [variables, setVariables] = useState<string[]>(["age", "income", "engagement"]);
   const [treatment, setTreatment] = useState("IMC_Exposure");
-  const [outcome, setOutcome] = useState("purchase");
+  // Use empty default when session exists (will be populated from API)
+  const [outcome, setOutcome] = useState(sessionId ? "" : "purchase");
+
+  type HistoryState = {
+    variables: string[];
+    edges: CausalEdgeFull[] | null;
+    roles: VariableRoles | null;
+  };
+
+  // Use empty defaults when session exists (will be populated from API)
+  const { state: hState, pushState, setHistory, undo, redo, canUndo, canRedo } = useHistory<HistoryState>({
+    variables: sessionId ? [] : ["age", "income", "engagement"],
+    edges: null,
+    roles: null,
+  });
+  const { variables, edges, roles } = hState;
+
+  const [hasPopulated, setHasPopulated] = useState(false);
 
   // Auto-populate from dataset if available
   useEffect(() => {
-    if (availableColumns.length > 0) {
+    if (availableColumns.length > 0 && !hasPopulated) {
       const mappedOutcome = (sessionData?.column_mapping as any)?.outcome || "purchase";
       
       // Select outcome if it exists in columns, else default
@@ -75,22 +110,32 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
       
       // Pre-select all filtered columns except treatment and outcome as variables
       const initialVars = availableColumns.filter(c => c !== "IMC_Exposure" && c !== "imc_category" && c !== mappedOutcome && c !== "purchase");
-      setVariables(initialVars);
+      setHistory({ ...hState, variables: initialVars });
+      setHasPopulated(true);
     }
-  }, [availableColumns, sessionData]);
+  }, [availableColumns, sessionData, hasPopulated]);
 
   const [loading, setLoading] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const [edges, setEdges] = useState<CausalEdgeFull[] | null>(null);
-  const [roles, setRoles] = useState<VariableRoles | null>(null);
   const [domains, setDomains] = useState<string[]>([]);
   const [model, setModel] = useState<string>("");
   const [selected, setSelected] = useState<CausalEdgeFull | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const allVars = Array.from(new Set([treatment, outcome, ...variables].filter(Boolean)));
+  const [nodesToDelete, setNodesToDelete] = useState<string[] | null>(null);
+  
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [backupState, setBackupState] = useState<{
+    edges: CausalEdgeFull[];
+    roles: VariableRoles;
+    variables: string[];
+  } | null>(null);
+
+
+  try {
+    const allVars = Array.from(new Set([treatment, outcome, ...variables].filter(Boolean)));
 
   const runDiscovery = async () => {
     if (!treatment || !outcome || variables.length < 1 || !name.trim()) {
@@ -98,7 +143,7 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
       return;
     }
     setLoading(true);
-    setEdges(null);
+    setHistory({ ...hState, edges: null });
     setError(null);
     setStepIdx(0);
 
@@ -113,8 +158,7 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
         outcome,
         sessionId: sessionId ?? null,
       });
-      setEdges(res.edges);
-      setRoles(res.variable_roles);
+      setHistory({ ...hState, edges: res.edges, roles: res.variable_roles });
       setDomains(res.domain_expertises);
       setModel(res.model_used);
 
@@ -139,11 +183,55 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
       source, target, confidence: 1.0, relationship_type: "direct",
       reasoning: "Manually specified by domain expert.", origin: "manual",
     };
-    setEdges((prev) => [...(prev ?? []), newEdge]);
+    pushState({ ...hState, edges: [...(edges ?? []), newEdge] });
   };
 
   const handleDelete = (edge: CausalEdgeFull) => {
-    setEdges((prev) => (prev ?? []).filter((e) => !(e.source === edge.source && e.target === edge.target)));
+    pushState({ ...hState, edges: (edges ?? []).filter((e) => !(e.source === edge.source && e.target === edge.target)) });
+  };
+
+  
+  const handleNodesDeleteRequest = (deletedIds: string[]) => {
+    setNodesToDelete(deletedIds);
+  };
+
+  const commitDeleteNodes = () => {
+    if (!nodesToDelete) return;
+    const idSet = new Set(nodesToDelete);
+    
+    const newVars = variables.filter(v => !idSet.has(v));
+    const newEdges = (edges ?? []).filter((e) => !idSet.has(e.source) && !idSet.has(e.target));
+    const newRoles = roles ? {
+      confounders: roles.confounders.filter(v => !idSet.has(v)),
+      mediators: roles.mediators.filter(v => !idSet.has(v)),
+      colliders: roles.colliders.filter(v => !idSet.has(v)),
+      instrumental_variables: roles.instrumental_variables.filter(v => !idSet.has(v)),
+    } : null;
+    
+    pushState({ variables: newVars, edges: newEdges, roles: newRoles });
+    setNodesToDelete(null);
+  };
+
+  const openFullscreen = () => {
+    setBackupState({
+      edges: edges ?? [],
+      roles: roles ?? { confounders: [], mediators: [], colliders: [], instrumental_variables: [] },
+      variables: [...variables],
+    });
+    setIsFullscreen(true);
+  };
+
+  const cancelFullscreen = () => {
+    if (backupState) {
+      setHistory({ variables: backupState.variables, edges: backupState.edges, roles: backupState.roles });
+    }
+    setIsFullscreen(false);
+    setBackupState(null);
+  };
+
+  const commitFullscreen = () => {
+    setIsFullscreen(false);
+    setBackupState(null);
   };
 
   const handleSave = async () => {
@@ -181,7 +269,29 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
         </div>
       )}
 
-      {!edges && (
+      {/* Show loading skeleton while session data is loading (prevents UI flash) */}
+      {sessionId && isLoadingSession && !edges && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" /> Generate DAG with AI
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Skeleton className="h-9" />
+              <Skeleton className="h-9" />
+              <Skeleton className="h-9 sm:col-span-2" />
+            </div>
+            <Skeleton className="h-32" />
+            <div className="flex justify-end">
+              <Skeleton className="h-10 w-32" />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!edges && !(sessionId && isLoadingSession) && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -226,9 +336,9 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
                         checked={variables.includes(col)}
                         onCheckedChange={(checked) => {
                           if (checked) {
-                            setVariables(prev => [...prev, col]);
+                            setHistory({ ...hState, variables: [...variables, col] });
                           } else {
-                            setVariables(prev => prev.filter(v => v !== col));
+                            setHistory({ ...hState, variables: variables.filter(v => v !== col) });
                           }
                         }}
                       />
@@ -241,7 +351,7 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
               ) : (
                 <>
                   <p className="text-xs text-muted-foreground">Type a variable name and press Enter (or paste comma-separated values).</p>
-                  <TagInput values={variables} onChange={setVariables} placeholder="e.g. age, income, engagement…" />
+                  <TagInput values={variables} onChange={(v) => setHistory({ ...hState, variables: v })} placeholder="e.g. age, income, engagement…" />
                 </>
               )}
             </div>
@@ -286,8 +396,11 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
           </Alert>
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
             <Card className="overflow-hidden">
-              <CardHeader className="pb-3">
+              <CardHeader className="pb-3 relative">
                 <CardTitle className="text-base">{name} — Verification</CardTitle>
+                <Button variant="ghost" size="icon" onClick={openFullscreen} className="h-8 w-8 absolute top-2 right-2 z-10" title="Fullscreen Edit">
+                  <Maximize2 className="h-4 w-4" />
+                </Button>
               </CardHeader>
               <CardContent className="p-0">
                 <DAGCanvas
@@ -299,7 +412,12 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
                   selectedEdgeKey={selected ? edgeKey(selected) : null}
                   onEdgeClick={setSelected}
                   onConnect={handleConnect}
-                  height="55vh"
+                  onNodesDeleteRequest={handleNodesDeleteRequest}
+                  onUndo={undo}
+                  onRedo={redo}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
+                  height="65vh"
                 />
               </CardContent>
             </Card>
@@ -333,6 +451,58 @@ export default function AIBuilder({ onSaved, onCancel, saveDag, embedded, sessio
       )}
 
       <EdgeReasoningSheet edge={selected} onClose={() => setSelected(null)} onDelete={handleDelete} />
+      <AlertDialog open={!!nodesToDelete} onOpenChange={(open) => !open && setNodesToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Node?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {nodesToDelete?.join(", ")}? 
+              This will remove the variable and all its causal relationships from the DAG. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={commitDeleteNodes} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={isFullscreen} onOpenChange={(open) => { if (!open) cancelFullscreen(); }}>
+        <DialogContent className="max-w-[95vw] w-[95vw] h-[95vh] flex flex-col p-4">
+          <DialogHeader>
+            <DialogTitle>DAG Editor (Fullscreen)</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 border rounded-lg overflow-hidden relative">
+            {edges && roles && (
+              <DAGCanvas
+                treatment={treatment}
+                outcome={outcome}
+                variables={allVars}
+                edges={edges}
+                variable_roles={roles}
+                selectedEdgeKey={selected ? edgeKey(selected) : null}
+                onEdgeClick={setSelected}
+                onConnect={handleConnect}
+                onNodesDeleteRequest={handleNodesDeleteRequest}
+                onUndo={undo}
+                onRedo={redo}
+                canUndo={canUndo}
+                canRedo={canRedo}
+                height="100%"
+              />
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={cancelFullscreen}>Cancel</Button>
+            <Button onClick={commitFullscreen}>Done</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+  } catch (err) {
+    return <div className="p-10 text-red-500 font-mono">Render Error in AIBuilder: {String(err)}</div>;
+  }
 }

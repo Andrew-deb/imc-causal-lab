@@ -11,6 +11,11 @@ import VariableRolesPanel from "./VariableRolesPanel";
 import EdgeReasoningSheet from "./EdgeReasoningSheet";
 import type { CausalEdgeFull, SavedDAG, VariableRoles } from "@/lib/dag-store";
 import { useToast } from "@/hooks/use-toast";
+import { useHistory } from "@/hooks/useHistory";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogDescription,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Props {
   onSaved: (dag: SavedDAG) => void;
@@ -23,14 +28,27 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
   const [name, setName] = useState("");
   const [treatment, setTreatment] = useState("IMC_Exposure");
   const [outcome, setOutcome] = useState("");
-  const [confounders, setConfounders] = useState<string[]>([]);
-  const [mediators, setMediators] = useState<string[]>([]);
-  const [colliders, setColliders] = useState<string[]>([]);
-  const [instruments, setInstruments] = useState<string[]>([]);
+
+  type HistoryState = {
+    edges: CausalEdgeFull[];
+    confounders: string[];
+    mediators: string[];
+    colliders: string[];
+    instruments: string[];
+  };
+
+  const { state: hState, pushState, setHistory, undo, redo, canUndo, canRedo } = useHistory<HistoryState>({
+    edges: [],
+    confounders: [],
+    mediators: [],
+    colliders: [],
+    instruments: [],
+  });
+  const { edges, confounders, mediators, colliders, instruments } = hState;
 
   const [canvasReady, setCanvasReady] = useState(false);
-  const [edges, setEdges] = useState<CausalEdgeFull[]>([]);
   const [selected, setSelected] = useState<CausalEdgeFull | null>(null);
+  const [nodesToDelete, setNodesToDelete] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false);
 
   const roles: VariableRoles = {
@@ -51,15 +69,33 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
   const handleConnect = (source: string, target: string) => {
     if (source === target) return;
     if (edges.some((e) => e.source === source && e.target === target)) return;
-    setEdges((prev) => [...prev, {
+    const newEdge: CausalEdgeFull = {
       source, target, confidence: 1.0,
       relationship_type: confounders.includes(source) ? "confounder" : mediators.includes(source) || mediators.includes(target) ? "mediator" : "direct",
       reasoning: "Manually specified by domain expert.", origin: "manual",
-    }]);
+    };
+    pushState({ ...hState, edges: [...edges, newEdge] });
   };
 
   const handleDelete = (e: CausalEdgeFull) => {
-    setEdges((prev) => prev.filter((x) => !(x.source === e.source && x.target === e.target)));
+    pushState({ ...hState, edges: edges.filter((x) => !(x.source === e.source && x.target === e.target)) });
+  };
+
+  const handleNodesDeleteRequest = (deletedIds: string[]) => {
+    setNodesToDelete(deletedIds);
+  };
+
+  const commitDeleteNodes = () => {
+    if (!nodesToDelete) return;
+    const idSet = new Set(nodesToDelete);
+    pushState({
+      edges: edges.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
+      confounders: confounders.filter(v => !idSet.has(v)),
+      mediators: mediators.filter(v => !idSet.has(v)),
+      colliders: colliders.filter(v => !idSet.has(v)),
+      instruments: instruments.filter(v => !idSet.has(v)),
+    });
+    setNodesToDelete(null);
   };
 
   const handleSave = async () => {
@@ -121,10 +157,10 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5"><Label className="text-sm">Confounders</Label><TagInput values={confounders} onChange={setConfounders} placeholder="Add confounder…" /></div>
-              <div className="space-y-1.5"><Label className="text-sm">Mediators</Label><TagInput values={mediators} onChange={setMediators} placeholder="Add mediator…" /></div>
-              <div className="space-y-1.5"><Label className="text-sm">Colliders</Label><TagInput values={colliders} onChange={setColliders} placeholder="Add collider…" /></div>
-              <div className="space-y-1.5"><Label className="text-sm">Instrumental Variables</Label><TagInput values={instruments} onChange={setInstruments} placeholder="Add instrument…" /></div>
+              <div className="space-y-1.5"><Label className="text-sm">Confounders</Label><TagInput values={confounders} onChange={(v) => setHistory({ ...hState, confounders: v })} placeholder="Add confounder…" /></div>
+              <div className="space-y-1.5"><Label className="text-sm">Mediators</Label><TagInput values={mediators} onChange={(v) => setHistory({ ...hState, mediators: v })} placeholder="Add mediator…" /></div>
+              <div className="space-y-1.5"><Label className="text-sm">Colliders</Label><TagInput values={colliders} onChange={(v) => setHistory({ ...hState, colliders: v })} placeholder="Add collider…" /></div>
+              <div className="space-y-1.5"><Label className="text-sm">Instrumental Variables</Label><TagInput values={instruments} onChange={(v) => setHistory({ ...hState, instruments: v })} placeholder="Add instrument…" /></div>
             </div>
             <div className="flex justify-end">
               <Button id="dag-create-canvas-btn" onClick={createCanvas} className="gap-1.5">
@@ -154,6 +190,11 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
                   selectedEdgeKey={selected ? edgeKey(selected) : null}
                   onEdgeClick={setSelected}
                   onConnect={handleConnect}
+                  onNodesDeleteRequest={handleNodesDeleteRequest}
+                  onUndo={undo}
+                  onRedo={redo}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
                   height="55vh"
                 />
               </CardContent>
@@ -170,6 +211,22 @@ export default function ManualBuilder({ onSaved, onCancel, saveDag }: Props) {
       )}
 
       <EdgeReasoningSheet edge={selected} onClose={() => setSelected(null)} onDelete={handleDelete} />
+      
+      <AlertDialog open={!!nodesToDelete} onOpenChange={(open) => !open && setNodesToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Node?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {nodesToDelete?.join(", ")}? 
+              This will remove the variable and all its causal relationships. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setNodesToDelete(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={commitDeleteNodes}>Delete Node</Button>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

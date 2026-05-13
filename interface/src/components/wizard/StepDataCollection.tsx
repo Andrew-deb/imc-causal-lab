@@ -160,6 +160,26 @@ export default function StepDataCollection({ onNext }: { onNext: () => void }) {
       toast({ title: "Missing mapping", description: "Please map the Campaign Type / Channel column.", variant: "destructive" });
       return;
     }
+    if (!columnMapping.campaignStartDate) {
+      toast({ title: "Missing mapping", description: "Please map the Campaign Start Date column.", variant: "destructive" });
+      return;
+    }
+    if (!columnMapping.campaignEndDate) {
+      toast({ title: "Missing mapping", description: "Please map the Campaign End Date column.", variant: "destructive" });
+      return;
+    }
+    if (!columnMapping.transactionDate) {
+      toast({ title: "Missing mapping", description: "Please map the Transaction Date column.", variant: "destructive" });
+      return;
+    }
+    if (!columnMapping.transactionAmount) {
+      toast({ title: "Missing mapping", description: "Please map the Transaction Amount / Price column.", variant: "destructive" });
+      return;
+    }
+    if (!columnMapping.transactionCustomerId) {
+      toast({ title: "Missing mapping", description: "Please map the Transaction Customer ID column.", variant: "destructive" });
+      return;
+    }
     setLoading(true);
     try {
       const formData = new FormData();

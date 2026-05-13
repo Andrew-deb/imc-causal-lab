@@ -10,10 +10,15 @@ import {
   type Edge,
   type Node,
   type Connection,
+  type NodeChange,
+  applyNodeChanges,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { Trash2, Undo, Redo } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { ROLE_COLORS } from "@/lib/causal-graph";
 import type { CausalEdgeFull, VariableRoles } from "@/lib/dag-store";
+import CustomNode from "./CustomNode";
 
 const RELATIONSHIP_COLOR: Record<CausalEdgeFull["relationship_type"], string> = {
   direct: "hsl(var(--primary))",
@@ -72,6 +77,11 @@ interface Props {
   selectedEdgeKey?: string | null;
   onEdgeClick?: (edge: CausalEdgeFull) => void;
   onConnect?: (source: string, target: string) => void;
+  onNodesDeleteRequest?: (deletedIds: string[]) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
   readOnly?: boolean;
   height?: string;
 }
@@ -89,20 +99,27 @@ export default function DAGCanvas({
   selectedEdgeKey,
   onEdgeClick,
   onConnect,
+  onNodesDeleteRequest,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
   readOnly,
-  height = "60vh",
+  height = "65vh",
 }: Props) {
+  const nodeTypes = useMemo(() => ({ custom: CustomNode }), []);
+
   const initial = useMemo(() => {
     const positions = layoutNodes(variables, treatment, outcome, variable_roles);
     const nodes: Node[] = variables.map((id) => {
       const role = getNodeRole(id, treatment, outcome, variable_roles);
       const color = ROLE_COLORS[role] ?? ROLE_COLORS.confounder;
+      const isFixed = id === treatment || id === outcome;
       return {
         id,
+        type: "custom",
         position: positions.get(id) ?? { x: 0, y: 0 },
-        data: { label: `${id}\n(${role.replace("_", " ")})` },
-        draggable: !readOnly,
-        style: {
+        data: { label: `${id}\n(${role.replace("_", " ")})`, style: {
           background: color.replace("hsl(", "hsla(").replace(")", ", 0.15)"),
           border: `2px solid ${color}`,
           borderRadius: 10,
@@ -113,7 +130,10 @@ export default function DAGCanvas({
           textAlign: "center" as const,
           minWidth: 110,
           color: "hsl(var(--foreground))",
-        },
+        } },
+        draggable: !readOnly,
+        // Treatment and Outcome nodes cannot be deleted
+        deletable: !readOnly && !isFixed,
       };
     });
     const rfEdges: Edge[] = edges.map((e) => {
@@ -145,9 +165,16 @@ export default function DAGCanvas({
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState(initial.rfEdges);
 
   // Reset nodes when graph identity changes (variables/roles/treatment/outcome).
+  // We preserve the user's dragged positions if the node already exists.
   useEffect(() => {
-    setRfNodes(initial.nodes);
-  }, [variables.join(","), treatment, outcome, JSON.stringify(variable_roles)]); // eslint-disable-line
+    setRfNodes((prev) => {
+      const prevPos = new Map(prev.map(n => [n.id, n.position]));
+      return initial.nodes.map(n => ({
+        ...n,
+        position: prevPos.has(n.id) ? prevPos.get(n.id)! : n.position
+      }));
+    });
+  }, [initial.nodes, setRfNodes]);
 
   // Refresh edges (selection or content change).
   useEffect(() => {
@@ -163,35 +190,122 @@ export default function DAGCanvas({
     [onConnect, readOnly, setRfEdges]
   );
 
+  // Handle node changes including deletions
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const removeChanges = changes.filter((c) => c.type === "remove");
+      
+      if (removeChanges.length > 0) {
+        if (!readOnly && onNodesDeleteRequest) {
+          // Notify parent to confirm deletion, but do NOT apply removal to internal state yet
+          onNodesDeleteRequest(removeChanges.map((c) => c.id));
+        }
+        
+        // Only apply non-remove changes (like position updates)
+        const otherChanges = changes.filter((c) => c.type !== "remove");
+        if (otherChanges.length > 0) {
+          onNodesChange(otherChanges);
+        }
+      } else {
+        // No removals, just apply all changes
+        onNodesChange(changes);
+      }
+    },
+    [onNodesChange, onNodesDeleteRequest, readOnly]
+  );
+
+  const selectedDeletableNodes = useMemo(() => {
+    return rfNodes.filter((n) => n.selected && n.deletable);
+  }, [rfNodes]);
+
+  const handleUiDelete = () => {
+    if (!readOnly && onNodesDeleteRequest && selectedDeletableNodes.length > 0) {
+      onNodesDeleteRequest(selectedDeletableNodes.map((n) => n.id));
+    }
+  };
+
   return (
-    <div style={{ height }} className="relative border rounded-lg overflow-hidden">
-      <div className="absolute top-2 right-2 z-10 bg-card/90 backdrop-blur border rounded-md px-2.5 py-1.5 text-[10px] flex items-center gap-3 shadow-sm">
-        <span className="flex items-center gap-1.5">
-          <svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="hsl(var(--primary))" strokeWidth="2" /></svg>
-          <span className="text-muted-foreground">AI</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="hsl(var(--primary))" strokeWidth="2" strokeDasharray="4 3" /></svg>
-          <span className="text-muted-foreground">✏️ Manual</span>
-        </span>
-      </div>
-      <ReactFlow
-        nodes={rfNodes}
-        edges={rfEdges}
-        onNodesChange={onNodesChange}
+    <div className="flex flex-col gap-2" style={{ height }}>
+      {/* Top Border Toolbar */}
+      {!readOnly && (
+        <div className="flex items-center justify-between bg-card border rounded-lg p-1.5 shadow-sm min-h-[44px]">
+          <div className="flex items-center gap-1">
+            {onUndo && (
+              <Button variant="ghost" size="sm" onClick={onUndo} disabled={!canUndo}>
+                <Undo className="w-4 h-4 mr-1" /> Undo
+              </Button>
+            )}
+            {onRedo && (
+              <Button variant="ghost" size="sm" onClick={onRedo} disabled={!canRedo}>
+                <Redo className="w-4 h-4 mr-1" /> Redo
+              </Button>
+            )}
+          </div>
+          <div>
+            {selectedDeletableNodes.length > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="shadow-sm gap-1.5 px-3 h-8 animate-in fade-in slide-in-from-right-4"
+                onClick={handleUiDelete}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete {selectedDeletableNodes.length === 1 ? `'${selectedDeletableNodes[0].id}'` : `${selectedDeletableNodes.length} nodes`}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="relative border rounded-lg overflow-hidden flex-1">
+        {/* Legend */}
+        <div className="absolute top-2 right-2 z-10 bg-card/90 backdrop-blur border rounded-md px-2.5 py-1.5 text-[10px] flex items-center gap-3 shadow-sm">
+          <span className="flex items-center gap-1.5">
+            <svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="hsl(var(--primary))" strokeWidth="2" /></svg>
+            <span className="text-muted-foreground">AI</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="hsl(var(--primary))" strokeWidth="2" strokeDasharray="4 3" /></svg>
+            <span className="text-muted-foreground">✏️ Manual</span>
+          </span>
+        </div>
+        
+        {/* Delete hint - keep as fallback hint but remove old floating button container */}
+        {!readOnly && selectedDeletableNodes.length === 0 && (
+          <div className="absolute bottom-12 right-2 z-10 bg-card/80 backdrop-blur border rounded-md px-2 py-1 text-[10px] text-muted-foreground shadow-sm pointer-events-none animate-in fade-in">
+            Select node → <kbd className="font-mono bg-muted px-1 rounded">Delete</kbd> to remove
+          </div>
+        )}
+
+        <ReactFlow
+          nodes={rfNodes}
+          edges={rfEdges}
+          nodeTypes={nodeTypes}
+        onNodesChange={handleNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         nodesConnectable={!readOnly}
         nodesDraggable={!readOnly}
+        deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
         fitView
+        fitViewOptions={{ padding: 0.2 }}
         onEdgeClick={(_, edge) => {
           const found = edges.find((e) => edgeKey(e) === edge.id);
           if (found && onEdgeClick) onEdgeClick(found);
         }}
       >
         <Background />
-        <Controls />
+        {/* Controls styled for dark mode visibility */}
+        <Controls
+          style={{
+            background: "hsl(var(--card))",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: "8px",
+          }}
+          className="[&_button]:bg-card [&_button]:text-foreground [&_button]:border-border [&_button:hover]:bg-muted"
+        />
       </ReactFlow>
+      </div>
     </div>
   );
 }

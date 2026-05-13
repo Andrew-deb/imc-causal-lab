@@ -10,7 +10,7 @@ import { useState, useEffect } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import { TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap, ShieldAlert } from "lucide-react";
+import { TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap, ShieldAlert, BarChart3 } from "lucide-react";
 import ModelEvaluation from "@/components/dashboard/ModelEvaluation";
 import { PageHeader } from "@/components/console/PageHeader";
 import { StatusPill } from "@/components/console/StatusPill";
@@ -323,6 +323,7 @@ export default function Dashboard() {
     queryKey: ["evaluation-results", sessionId],
     queryFn: () => (sessionId ? api.getEvaluationResults(sessionId) : Promise.reject("No session ID")),
     enabled: !!sessionId,
+    retry: false,
   });
 
   const channels = data ? Object.keys(data.channel_data) : [];
@@ -443,6 +444,22 @@ export default function Dashboard() {
              <div className="flex justify-center py-10">
                <Skeleton className="h-80 w-full" />
              </div>
+          )}
+          {data && !evaluationData && !isLoadingEval && (
+            <Card>
+              <CardContent className="py-12 flex flex-col items-center gap-4 text-center">
+                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                  <BarChart3 className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">No Evaluation Data</h3>
+                  <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                    Model evaluation metrics haven't been computed for this session yet. 
+                    Run the evaluation pipeline to see uplift curves, descriptive statistics, and associative vs causal comparisons.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
       </Tabs>

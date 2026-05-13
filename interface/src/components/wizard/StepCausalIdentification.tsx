@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Library, Sparkles, ExternalLink, ArrowLeft } from "lucide-react";
 import { useSession } from "@/contexts/SessionContext";
 import { useDAGLibrary, type SavedDAG } from "@/lib/dag-store";
+import { api } from "@/lib/api";
 import DAGCanvas from "@/components/dag/DAGCanvas";
 import VariableRolesPanel from "@/components/dag/VariableRolesPanel";
 import AIBuilder from "@/components/dag/AIBuilder";
@@ -31,6 +32,19 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
   const choose = (id: string) => {
     setPickedId(id);
     setSelectedDagId(id);
+  };
+
+  // Attach the selected DAG to the session before proceeding
+  const handleNext = async () => {
+    if (pickedId && sessionId) {
+      try {
+        await api.attachDagToSession(sessionId, pickedId);
+      } catch (err) {
+        console.error("Failed to attach DAG to session:", err);
+        // Non-blocking: proceed even if attach fails
+      }
+    }
+    onNext();
   };
 
   if (mode === "ai") {
@@ -154,7 +168,7 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
 
       <div className="flex justify-between">
         <Button variant="outline" onClick={onBack}>Back</Button>
-        <Button id="dag-step-next" onClick={onNext} disabled={!pickedId}>Next</Button>
+        <Button id="dag-step-next" onClick={handleNext} disabled={!pickedId}>Next</Button>
       </div>
     </div>
   );

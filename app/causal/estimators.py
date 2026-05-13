@@ -13,6 +13,33 @@ from app.schemas.modeling_schema import ModelResult, UpliftSegments
 
 logger = logging.getLogger(__name__)
 
+# ── Global random seed for reproducibility ──────────────────────────
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+
+def trim_ite(
+    ite: np.ndarray,
+    lower_pct: float = 1.0,
+    upper_pct: float = 99.0,
+) -> np.ndarray:
+    """
+    Winsorise (clip) extreme ITE values to the given percentiles.
+
+    Tree-based causal models can produce implausibly large individual
+    treatment effects for observations in sparse feature regions.
+    A few such outliers can dominate the mean and produce an unstable
+    ATE across runs. Winsorising at 1%/99% removes these extremes
+    while preserving the bulk of the distribution.
+
+    This does NOT discard data — it caps extreme values at the
+    percentile boundaries, so the array length stays the same.
+    """
+    lo = np.percentile(ite, lower_pct)
+    hi = np.percentile(ite, upper_pct)
+    return np.clip(ite, lo, hi)
+
+
 # UPLIFT SEGMENTATION — 4-segment classification
 
 def classify_uplift_segments(
@@ -153,29 +180,27 @@ class TLearnerEstimator(BaseEstimator):
 
         model = TLearner(
             models=[
-                GradientBoostingRegressor(n_estimators=n_est, max_depth=4, random_state=42),
-                GradientBoostingRegressor(n_estimators=n_est, max_depth=4, random_state=42),
+                GradientBoostingRegressor(n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED),
+                GradientBoostingRegressor(n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED),
             ]
         )
         model.fit(Y, T, X=X)
 
-        # Individual teratment effects
-        
-        ite = model.effect(X).flatten()
+        # Individual treatment effects — trimmed to remove extreme outliers
+        ite_raw = model.effect(X).flatten()
+        ite = trim_ite(ite_raw)
 
         ate = float(np.mean(ite))
         att = float(np.mean(ite[T==1])) if np.sum(T == 1) > 0 else ate
 
         # Counterfactual: predicted outcome under NO treatment
         # T-Learner models_[0] = control model, models_[1] = treated model
-
         try:
             mu_0 = model.models_[0].predict(X).flatten()
         except Exception:
             mu_0 = None
 
-        # Confidence intervals (T-Learner supports inference)
-
+        # Confidence intervals
         try:
             ate_inference = model.effect_inference(X)
             ci = ate_inference.conf_int(alpha=0.05)
@@ -183,7 +208,7 @@ class TLearnerEstimator(BaseEstimator):
         except Exception:
             ate_ci = None
 
-        logger.info(f"  T-Learner ATE={ate:.4f}, ATT={att:.4f}")
+        logger.info(f"  T-Learner ATE={ate:.4f}, ATT={att:.4f} (trimmed from raw ATE={np.mean(ite_raw):.4f})")
 
         return ModelResult(
             model_name=self.name,
@@ -212,14 +237,14 @@ class DRLearnerEstimator(BaseEstimator):
 
         model = DRLearner(
             model_propensity=GradientBoostingClassifier(
-                n_estimators=n_est, max_depth=4, random_state=42
+                n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED
             ),
             model_regression=GradientBoostingRegressor(
-                n_estimators=n_est, max_depth=4, random_state=42
+                n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED
             ),
             model_final=StatsModelsLinearRegression(),
             cv=settings.CROSS_FITTING_FOLDS,
-            random_state=42,
+            random_state=RANDOM_SEED,
         )
         model.fit(Y, T, X=X)
 
@@ -228,34 +253,33 @@ class DRLearnerEstimator(BaseEstimator):
         # Fit a standalone classifier to get full-data propensity P(T=1|X).
         try:
             from sklearn.ensemble import GradientBoostingClassifier as _GBC
-            _prop_clf = _GBC(n_estimators=n_est, max_depth=4, random_state=42)
+            _prop_clf = _GBC(n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED)
             _prop_clf.fit(X, T)
             self._last_propensity = _prop_clf.predict_proba(X)[:, 1]
         except Exception:
             self._last_propensity = None
 
-        # Individual treatment effects
-        ite = model.effect(X).flatten()
+        # Individual treatment effects — trimmed to remove extreme outliers
+        ite_raw = model.effect(X).flatten()
+        ite = trim_ite(ite_raw)
         ate = float(np.mean(ite))
         att = float(np.mean(ite[T == 1])) if np.sum(T == 1) > 0 else ate
 
         # Counterfactual: predicted outcome under NO treatment
         # DR-Learner's regression model predicts E[Y|X] (baseline)
-
         try:
             mu_0 = model.model_regression_.predict(X).flatten()
         except Exception:
             mu_0 = None
 
         # Confidence intervals (DR-Learner supports asymptotic inference)
-
         try:
             ate_inference = model.effect_inference(X)
             ci = ate_inference.conf_int(alpha=0.05)
             ate_ci = [float(np.mean(ci[0])), float(np.mean(ci[1]))]
         except Exception:
             ate_ci = None
-        logger.info(f"  DR-Learner ATE={ate:.4f}, ATT={att:.4f}")
+        logger.info(f"  DR-Learner ATE={ate:.4f}, ATT={att:.4f} (trimmed from raw ATE={np.mean(ite_raw):.4f})")
 
         return ModelResult(
             model_name=self.name,
@@ -286,14 +310,14 @@ class CausalForestEstimator(BaseEstimator):
 
         model = CausalForestDML(
             model_y=GradientBoostingRegressor(
-                n_estimators=n_est, max_depth=4, random_state=42
+                n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED
             ),
             model_t=GradientBoostingRegressor(
-                n_estimators=n_est, max_depth=4, random_state=42
+                n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED
             ),
             n_estimators=settings.CAUSAL_FOREST_N_ESTIMATORS,
             cv=settings.CROSS_FITTING_FOLDS,
-            random_state=42,
+            random_state=RANDOM_SEED,
         )
         model.fit(Y, T, X=X)
 
@@ -302,20 +326,19 @@ class CausalForestEstimator(BaseEstimator):
         # Fit a standalone classifier to get full-data propensity P(T=1|X).
         try:
             from sklearn.ensemble import GradientBoostingClassifier as _GBC
-            _prop_clf = _GBC(n_estimators=n_est, max_depth=4, random_state=42)
+            _prop_clf = _GBC(n_estimators=n_est, max_depth=4, random_state=RANDOM_SEED)
             _prop_clf.fit(X, T)
             self._last_propensity = _prop_clf.predict_proba(X)[:, 1]
         except Exception:
             self._last_propensity = None
 
-        # Individual treatment effects
-
-        ite = model.effect(X).flatten()
+        # Individual treatment effects — trimmed to remove extreme outliers
+        ite_raw = model.effect(X).flatten()
+        ite = trim_ite(ite_raw)
         ate = float(np.mean(ite))
         att = float(np.mean(ite[T == 1])) if np.sum(T == 1) > 0 else ate
 
         # Confidence intervals (Causal Forest supports honest inference)
-
         try:
             ate_inference = model.effect_inference(X)
             ci = ate_inference.conf_int(alpha=0.05)
@@ -324,7 +347,6 @@ class CausalForestEstimator(BaseEstimator):
             ate_ci = None
 
         # Feature importances (which confounders drive heterogeneity)
-
         importances = None
         try:
             raw_importances = model.feature_importances_
@@ -340,11 +362,10 @@ class CausalForestEstimator(BaseEstimator):
                 }
         except Exception:
             logger.warning("Could not extract feature importances from Causal Forest")
-        logger.info(f"  Causal Forest ATE={ate:.4f}, ATT={att:.4f}")
+        logger.info(f"  Causal Forest ATE={ate:.4f}, ATT={att:.4f} (trimmed from raw ATE={np.mean(ite_raw):.4f})")
 
         # Causal Forest uses residualisation — no direct mu_0 access
         # Falls back to ITE-only uplift segmentation
-
         return ModelResult(
             model_name=self.name,
             ate=round(ate, 6),

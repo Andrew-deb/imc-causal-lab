@@ -17,6 +17,7 @@ from app.schemas.modeling_schema import (
     AssociativeVsCausalComparison,
     ChannelSummary,
     PipelineResult,
+    EvaluationResponse,
 )
 from app.pipelines.data_processing import (
     merge_datasets,
@@ -44,56 +45,94 @@ def _build_channel_result(
     """
     Aggregate multiple estimator results into a single ChannelResult.
 
-    - consensus_ate/att: median across causal models (excludes logistic_regression)
-    - agreement_score: 1 - (std / |mean|) of causal ATEs (higher = more agreement)
-    - best_model: the causal model with the tightest confidence interval
-    - confidence_level: "high" / "medium" / "low" based on agreement + balance
+    - consensus_ate/att: Inverse-variance (CI-width) weighted average of valid models.
+    - agreement_score: 1 - (std / |mean|) of causal ATEs.
+    - best_model: the causal model with the tightest confidence interval.
+    - confidence_level: "high" / "medium" / "low" based on agreement + balance.
     """
     # Separate causal models from associative baseline
+    lr = model_results.get("logistic_regression")
+    baseline_ate = lr.ate if lr else 0.0
+
     causal_results = {
         name: r for name, r in model_results.items()
         if name != "logistic_regression"
     }
 
-    if not causal_results:
-        # Only logistic regression ran — no causal consensus
-        lr = model_results.get("logistic_regression")
+    # 1. Aggressive Outlier Rejection
+    # Filter out models that suffered from extreme extrapolation failure.
+    valid_causal_results = {}
+    for name, r in causal_results.items():
+        # Heuristic: If a causal estimate is completely unphysical
+        # (e.g. > 3x the baseline effect AND absolute magnitude > 100)
+        if abs(r.ate) > max(100.0, 3 * abs(baseline_ate)):
+            logger.warning(
+                f"Dropping {name} for channel {channel_name}: "
+                f"ATE {r.ate:.2f} is implausible compared to baseline {baseline_ate:.2f}"
+            )
+            continue
+        valid_causal_results[name] = r
+
+    if not valid_causal_results:
+        # Fallback to associative if all causal models failed or were rejected
+        logger.warning(f"No valid causal models for {channel_name}. Falling back to associative baseline.")
         return ChannelResult(
             channel_name=channel_name,
             model_results=model_results,
-            consensus_ate=lr.ate if lr else 0.0,
+            consensus_ate=baseline_ate,
             consensus_att=lr.att if lr else 0.0,
             agreement_score=0.0,
             best_model="logistic_regression",
             confidence_level="low",
         )
 
-    # Consensus: median of causal ATEs (robust to outliers)
-    causal_ates = [r.ate for r in causal_results.values()]
-    causal_atts = [r.att for r in causal_results.values()]
-    consensus_ate = float(np.median(causal_ates))
-    consensus_att = float(np.median(causal_atts))
-
-    # Agreement: how much do the causal models agree?
-    # 1 - (std / |mean|), clamped to [0, 1]
-    ate_mean = np.mean(causal_ates)
-    ate_std = np.std(causal_ates)
-    if abs(ate_mean) > 1e-6:
-        agreement = max(0.0, min(1.0, 1.0 - (ate_std / abs(ate_mean))))
-    else:
-        agreement = 1.0 if ate_std < 1e-6 else 0.0
-
-    # Best model: prefer the one with the tightest CI, else causal_forest
+    # 2. CI-Weighted Consensus
+    weights = []
+    ates = []
+    atts = []
+    
     best_model = "causal_forest"
     narrowest_ci = float("inf")
-    for name, r in causal_results.items():
+
+    for name, r in valid_causal_results.items():
+        ates.append(r.ate)
+        atts.append(r.att)
+        
         if r.ate_ci and len(r.ate_ci) == 2:
             ci_width = abs(r.ate_ci[1] - r.ate_ci[0])
             if ci_width < narrowest_ci:
                 narrowest_ci = ci_width
                 best_model = name
+            
+            # Weight is inversely proportional to CI width
+            # (Adding a small constant to prevent division by zero)
+            weight = 1.0 / (ci_width + 1.0)
+        else:
+            # Model lacks a CI (e.g., T-Learner). 
+            # Give it a very low default weight (equivalent to CI width of 1000)
+            # so it doesn't dominate models that provide honest inference bounds.
+            weight = 0.001
 
-    # Confidence level
+        weights.append(weight)
+
+    # Normalize weights and compute weighted average
+    weight_sum = sum(weights)
+    if weight_sum > 0:
+        normalized_weights = [w / weight_sum for w in weights]
+        consensus_ate = float(np.sum(np.array(ates) * np.array(normalized_weights)))
+        consensus_att = float(np.sum(np.array(atts) * np.array(normalized_weights)))
+    else:
+        consensus_ate = float(np.median(ates))
+        consensus_att = float(np.median(atts))
+
+    # 3. Agreement Score & Confidence Level
+    ate_mean = np.mean(ates)
+    ate_std = np.std(ates) if len(ates) > 1 else 0.0
+    if abs(ate_mean) > 1e-6:
+        agreement = max(0.0, min(1.0, 1.0 - (ate_std / abs(ate_mean))))
+    else:
+        agreement = 1.0 if ate_std < 1e-6 else 0.0
+
     if agreement >= 0.7 and balance_status == "good":
         confidence_level = "high"
     elif agreement >= 0.4 or balance_status == "good":
@@ -266,7 +305,7 @@ def run_pipeline(
 
     session_id = str(uuid.uuid4())
 
-    with PipelineTracker("🔬 IMC CAUSAL PIPELINE", total_steps=7) as tracker:
+    with PipelineTracker("[IMC] CAUSAL PIPELINE", total_steps=7) as tracker:
 
         # ── Step 1: Merge ──────────────────────────────────────────
         with tracker.step(1, "Merging datasets") as s:
@@ -325,7 +364,7 @@ def run_pipeline(
                     )
 
                 model_results[estimator.name] = result
-                pbar.set_postfix_str(f"{channel_name} → {estimator.name} ✓ ATE={result.ate:.2f}")
+                pbar.set_postfix_str(f"{channel_name} -> {estimator.name} [OK] ATE={result.ate:.2f}")
                 pbar.update(1)
 
             # Build channel-level aggregation
@@ -334,9 +373,6 @@ def run_pipeline(
                 channel_name, model_results, balance_status
             )
             cross = _build_cross_model_comparison(model_results)
-            avc = _build_associative_vs_causal(
-                channel_name, model_results, channel_result.consensus_ate
-            )
 
             persuadables_pct = 0.0
             best_result = model_results.get(channel_result.best_model)
@@ -351,20 +387,18 @@ def run_pipeline(
                 persuadables_pct=round(persuadables_pct, 4),
                 confidence_level=channel_result.confidence_level,
             )
-            return channel_name, channel_result, cross, avc, summary
+            return channel_name, channel_result, cross, summary
 
         channel_results: dict[str, ChannelResult] = {}
         cross_model_comparisons: dict[str, CrossModelComparison] = {}
-        assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
         channel_summaries: list[ChannelSummary] = []
 
         pbar = tracker.model_loop(total=n_total)
         for ch, (X, T, Y) in channel_data.items():
             try:
-                name, ch_result, cross, avc, summary = _run_channel(ch, X, T, Y)
+                name, ch_result, cross, summary = _run_channel(ch, X, T, Y)
                 channel_results[name] = ch_result
                 cross_model_comparisons[name] = cross
-                assoc_vs_causal[name] = avc
                 channel_summaries.append(summary)
             except Exception as e:
                 logger.error(f"Channel '{ch}' failed entirely: {e}")
@@ -396,13 +430,11 @@ def run_pipeline(
                 channel_data=channel_results,
                 balance_results=balance_results,
                 cross_model_comparison=cross_model_comparisons,
-                associative_vs_causal=assoc_vs_causal,
                 channel_summary=channel_summaries,
-                imc_mapping=imc_mapping,
             )
 
         top = channel_ranking[0]['channel'] if channel_ranking else 'none'
-        tracker.complete(f"Pipeline complete — {len(channel_results)} channels | 🏆 Top: {top}")
+        tracker.complete(f"Pipeline complete — {len(channel_results)} channels | Top: {top}")
 
     return result
 
@@ -439,7 +471,7 @@ def run_evaluation(
 
     session_id = str(uuid.uuid4())
 
-    with PipelineTracker("📊 IMC EVALUATION PIPELINE", total_steps=6) as tracker:
+    with PipelineTracker("[IMC] EVALUATION PIPELINE", total_steps=6) as tracker:
 
         # ── Step 1: Merge ──────────────────────────────────────────
         with tracker.step(1, "Merging datasets") as s:
@@ -456,6 +488,7 @@ def run_evaluation(
             balance_results = check_treatment_balance(
                 merged, imc_categories, all_possible_categories=ALL_IMC_CATEGORIES
             )
+            balance_lookup = {br.imc_category: br.status for br in balance_results}
             aligned = apply_temporal_alignment(merged, campaigns_df, col_mapping)
 
         # ── Step 3: Descriptive statistics ─────────────────────────
@@ -480,10 +513,13 @@ def run_evaluation(
 
         channel_evals = {}
         best_model_per_channel = {}
+        # Collect model results per channel for associative vs causal comparison
+        channel_model_results: dict[str, dict[str, ModelResult]] = {}
         pbar = tracker.model_loop(total=n_total, colour="magenta")
 
         for ch, (X, T, Y) in channel_data.items():
             model_evals = {}
+            model_results_for_ch: dict[str, ModelResult] = {}
 
             for estimator in estimators:
                 fallback_result = ModelResult(model_name=estimator.name, ate=0.0, att=0.0)
@@ -492,6 +528,9 @@ def run_evaluation(
                     fallback=fallback_result,
                     error_msg=f"{ch}/{estimator.name}",
                 )
+
+                # Store the model result for associative vs causal comparison
+                model_results_for_ch[estimator.name] = result
 
                 ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
                 if len(ite) < len(T):
@@ -508,20 +547,21 @@ def run_evaluation(
                     model_name=estimator.name,
                     metrics=EvaluationMetrics(**metrics),
                 )
-                pbar.set_postfix_str(f"{ch} → {estimator.name} ✓")
+                pbar.set_postfix_str(f"{ch} -> {estimator.name} [OK]")
                 pbar.update(1)
 
             channel_evals[ch] = ChannelEvaluationResult(
                 channel_name=ch,
                 model_evaluations=model_evals,
             )
+            channel_model_results[ch] = model_results_for_ch
 
             # Select best targeting model for this channel (by Uplift AUC)
             best_model_per_channel[ch] = select_best_model(model_evals)
 
         pbar.close()
 
-        # ── Step 6: Best model selection + summary ─────────────────
+        # ── Step 6: Best model selection + summary + associative vs causal
         with tracker.step(6, "Selecting best models + building summary") as s:
             summary_table = []
             for ch, ch_eval in channel_evals.items():
@@ -538,8 +578,17 @@ def run_evaluation(
                         "is_best": model_name == best_model_per_channel.get(ch),
                     })
 
+            # Build associative vs causal comparison per channel
+            assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
+            for ch, mr in channel_model_results.items():
+                balance_status = balance_lookup.get(ch, "good")
+                ch_result = _build_channel_result(ch, mr, balance_status)
+                assoc_vs_causal[ch] = _build_associative_vs_causal(
+                    ch, mr, ch_result.consensus_ate
+                )
+
             winners = ", ".join(f"{ch}: {m}" for ch, m in best_model_per_channel.items())
-            s.detail(f"🏆 {winners}")
+            s.detail(f"Top: {winners}")
 
         tracker.complete(f"Evaluation complete — {len(channel_evals)} channels × {len(estimators)} models")
 
@@ -549,6 +598,7 @@ def run_evaluation(
         descriptive_statistics=desc_stats,
         model_performance_summary=summary_table,
         best_model_per_channel=best_model_per_channel,
+        associative_vs_causal=assoc_vs_causal,
     )
 
 

@@ -46,10 +46,11 @@ async def get_session_detail(session_id: str):
         "imc_mapping": session.get("imc_mapping"),
         "column_mapping": session.get("column_mapping"),
         "dag_id": session.get("dag_id"),
+        "dataset_roles": session.get("dataset_roles"),
         "has_results": session.get("result") is not None,
+        "has_evaluation": session.get("evaluation_result") is not None,
     }
 
-    # Include results summary if available
     # Include results summary if available
     result = session.get("result")
     if result:
@@ -58,6 +59,14 @@ async def get_session_detail(session_id: str):
             detail["result"] = result.model_dump()
         else:
             detail["result"] = result
+
+    # Include evaluation results if available
+    eval_result = session.get("evaluation_result")
+    if eval_result:
+        if hasattr(eval_result, "model_dump"):
+            detail["evaluation_result"] = eval_result.model_dump()
+        else:
+            detail["evaluation_result"] = eval_result
 
     return detail
 
@@ -96,3 +105,58 @@ async def get_treatment_balance(session_id: str):
         result_dict = result
 
     return result_dict.get("balance_results", [])
+
+
+@router.patch("/{session_id}/attach-dag")
+async def attach_dag_to_session(session_id: str, payload: dict):
+    """
+    Attach a DAG from the library to a session.
+
+    Accepts: { "dag_id": "..." }
+    Updates the session with the DAG reference and transitions status
+    to 'discovery_completed'.
+    """
+    dag_id = payload.get("dag_id")
+    if not dag_id:
+        raise HTTPException(status_code=400, detail="dag_id is required")
+
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    session_manager.update_session(
+        session_id,
+        dag_id=dag_id,
+        status="discovery_completed",
+    )
+    logger.info(f"DAG {dag_id[:12]} attached to session {session_id[:12]}")
+
+    return {"status": "success", "session_id": session_id, "dag_id": dag_id}
+
+
+@router.get("/{session_id}/data-preview")
+async def get_data_preview(session_id: str, rows: int = 5):
+    """
+    On-demand data preview — returns the first N rows from each stored dataset.
+    Fetches from in-memory or Azure Blob depending on the storage backend.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    import numpy as np
+    preview = {}
+    for key, label in [
+        ("customers_df", "customers"),
+        ("transactions_df", "transactions"),
+        ("campaigns_df", "campaigns"),
+    ]:
+        df = session.get(key)
+        if df is not None:
+            preview[label] = {
+                "headers": df.columns.tolist(),
+                "rows": df.head(rows).replace({np.nan: None}).values.tolist(),
+                "total_rows": len(df),
+            }
+
+    return {"status": "success", "datasets": preview}

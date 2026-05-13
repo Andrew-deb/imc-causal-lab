@@ -25,7 +25,7 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
   const descStats = evaluationData.descriptive_statistics[selectedChannel];
   const evalResult = evaluationData.channel_evaluations[selectedChannel];
   const bestModel = evaluationData.best_model_per_channel[selectedChannel];
-  const assocData = data.associative_vs_causal[selectedChannel];
+  const assocData = evaluationData.associative_vs_causal?.[selectedChannel];
 
   // 1. Descriptive Statistics
   const renderDescStats = () => {

@@ -41,6 +41,9 @@ async def get_evaluation(session_id: str):
             detail=f"No evaluation results yet. Status: {session.get('status', 'unknown')}"
         )
 
+    # Handle Pydantic model vs dict
+    if hasattr(eval_result, "model_dump"):
+        return eval_result.model_dump()
     return eval_result
 
 

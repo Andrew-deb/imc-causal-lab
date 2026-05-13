@@ -37,21 +37,35 @@ def extract_column_name(value: str) -> str:
 
 def build_column_mapping(raw: dict) -> ColumnMapping:
     """
-    Convert the frontend's column mapping dict into a backend ColumnMapping.
+    Convert a column mapping dict into the backend ColumnMapping.
+
+    Supports two formats:
+      - Frontend wizard format:  {"campaignType": "campaigns.csv::campaign_type", ...}
+      - Backend / Swagger format: {"customer_id_col": "customer_id", ...}
+
     Raises ValueError if required fields are missing.
     """
+    required = [
+        "customer_id_col", "campaign_type_col",
+        "campaign_start_col", "campaign_end_col",
+        "transaction_date_col", "transaction_amount_col",
+    ]
+
+    # Check if the raw dict already uses backend keys
+    if any(k in raw for k in required):
+        # Already in backend format — pass through directly
+        missing = [k for k in required if not raw.get(k)]
+        if missing:
+            raise ValueError(f"Missing required column mappings: {missing}")
+        return ColumnMapping(**{k: v for k, v in raw.items() if v})
+
+    # Otherwise, translate from frontend format
     mapped = {}
     for frontend_key, backend_key in FRONTEND_TO_BACKEND_KEY.items():
         value = raw.get(frontend_key, "")
         if value and value != "__none__":
             mapped[backend_key] = extract_column_name(value)
 
-    # Validate required fields
-    required = [
-        "customer_id_col", "campaign_type_col",
-        "campaign_start_col", "campaign_end_col",
-        "transaction_date_col", "transaction_amount_col",
-    ]
     missing = [k for k in required if not mapped.get(k)]
     if missing:
         raise ValueError(f"Missing required column mappings: {missing}")
@@ -77,7 +91,7 @@ async def execute_pipeline(
     if not session.get("imc_mapping"):
         raise ValueError("IMC mapping not set — call /map-campaigns first")
 
-    session_manager.update_session(session_id, status="running", column_mapping=col_mapping)
+    session_manager.update_session(session_id, status="running")
 
     try:
         result = run_pipeline(

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 
 
@@ -38,7 +38,8 @@ class ChannelDescriptiveStats(BaseModel):
     stats: list[DescriptiveStats]
 
 class ColumnMapping(BaseModel):
-    
+    """Maps your CSV column names to the roles the pipeline expects."""
+
     # Required fields for the uploaded dataset.
     customer_id_col: str
     campaign_type_col: str
@@ -53,13 +54,56 @@ class ColumnMapping(BaseModel):
     mediator_cols: list[str] = []
     collider_cols: list[str] = []
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{
+                "customer_id_col": "customer_id",
+                "campaign_type_col": "campaign_type",
+                "campaign_start_col": "start_date",
+                "campaign_end_col": "end_date",
+                "transaction_date_col": "transaction_date",
+                "transaction_amount_col": "price",
+            }]
+        }
+    )
+
 
 class RunPipelineRequest(BaseModel):
     """
-    Simplified pipeline request — just session_id.
-    Column mapping is pulled from the session (stored during upload).
+    Pipeline request.
+
+    - session_id (required): identifies the uploaded session.
+    - column_mapping (optional): override column mappings directly.
+      If omitted (or null) the backend pulls the mapping from the
+      session (stored during the wizard's dataset upload step).
+
+    Swagger tip: To use session-stored mappings, either delete the
+    column_mapping key entirely or set it to null.
     """
     session_id: str
+    column_mapping: Optional[ColumnMapping] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "session_id": "session_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+                    "column_mapping": None,
+                },
+                {
+                    "session_id": "session_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+                    "column_mapping": {
+                        "customer_id_col": "customer_id",
+                        "campaign_type_col": "campaign_type",
+                        "campaign_start_col": "start_date",
+                        "campaign_end_col": "end_date",
+                        "transaction_date_col": "transaction_date",
+                        "transaction_amount_col": "price",
+                    }
+                }
+            ]
+        }
+    )
 
 class ModelingConfig(BaseModel):
     
@@ -142,11 +186,7 @@ class PipelineResult(BaseModel):
 
     # --- Detailed Comparison ---
     cross_model_comparison: dict[str, CrossModelComparison]
-    associative_vs_causal: dict[str, AssociativeVsCausalComparison]
     channel_summary: list[ChannelSummary]
-
-    # --- Metadata ---
-    imc_mapping: dict[str, str]
 
 
 # ── Evaluation Response (separate endpoint) ─────────────────────────
@@ -171,3 +211,5 @@ class EvaluationResponse(BaseModel):
     model_performance_summary: list[dict]  # flattened table for easy display
     # Evaluation-driven best model (by Uplift AUC) per channel
     best_model_per_channel: dict[str, str] = {}
+    # Associative vs Causal comparison (moved from PipelineResult)
+    associative_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
