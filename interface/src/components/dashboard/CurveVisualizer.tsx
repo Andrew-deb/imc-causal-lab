@@ -53,6 +53,7 @@ export function CurveVisualizer({
             />
             <YAxis
               tick={{ fontSize: 11 }}
+              tickFormatter={(v: number) => v.toFixed(3)}
               label={{ value: yLabel, angle: -90, position: "insideLeft", fontSize: 11 }}
             />
             <Tooltip

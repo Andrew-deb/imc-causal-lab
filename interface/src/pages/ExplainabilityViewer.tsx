@@ -196,24 +196,58 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
   onDelete: (id: string) => void;
 }) {
   const { toast } = useToast();
-  const [edges, setEdges] = useState<CausalEdgeFull[]>(dag.edges);
+  const [history, setHistory] = useState([
+    { edges: dag.edges, variables: dag.variables, roles: dag.variable_roles }
+  ]);
+  const [historyIndex, setHistoryIndex] = useState(0);
   const [selected, setSelected] = useState<CausalEdgeFull | null>(null);
-  const variables = Array.from(new Set([dag.treatment, dag.outcome, ...dag.variables]));
+
+  const current = history[historyIndex];
+  const edges = current.edges;
+  const variables = Array.from(new Set([dag.treatment, dag.outcome, ...current.variables]));
+
+  const pushState = (newState: { edges: CausalEdgeFull[]; variables: string[]; roles: any }) => {
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newState);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+  };
 
   const handleConnect = (source: string, target: string) => {
     if (source === target) return;
     if (edges.some((e) => e.source === source && e.target === target)) return;
-    setEdges((prev) => [...prev, {
-      source, target, confidence: 1.0, relationship_type: "direct",
-      reasoning: "Manually specified by domain expert.", origin: "manual",
-    }]);
+    pushState({
+      ...current,
+      edges: [...edges, {
+        source, target, confidence: 1.0, relationship_type: "direct",
+        reasoning: "Manually specified by domain expert.", origin: "manual",
+      }]
+    });
   };
-  const handleDelete = (e: CausalEdgeFull) => {
-    setEdges((prev) => prev.filter((x) => !(x.source === e.source && x.target === e.target)));
+
+  const handleDeleteEdge = (e: CausalEdgeFull) => {
+    pushState({
+      ...current,
+      edges: edges.filter((x) => !(x.source === e.source && x.target === e.target))
+    });
   };
+
+  const handleNodesDeleteRequest = (ids: string[]) => {
+    const idSet = new Set(ids);
+    const newVars = current.variables.filter(v => !idSet.has(v));
+    const newEdges = edges.filter(e => !idSet.has(e.source) && !idSet.has(e.target));
+    const newRoles = {
+      confounders: current.roles.confounders.filter((v: string) => !idSet.has(v)),
+      mediators: current.roles.mediators.filter((v: string) => !idSet.has(v)),
+      colliders: current.roles.colliders.filter((v: string) => !idSet.has(v)),
+      instrumental_variables: current.roles.instrumental_variables.filter((v: string) => !idSet.has(v)),
+    };
+    pushState({ variables: newVars, edges: newEdges, roles: newRoles });
+  };
+
   const persist = async () => {
     try {
-      await onSave({ ...dag, edges });
+      await onSave({ ...dag, edges, variables: current.variables, variable_roles: current.roles });
       toast({ title: "DAG updated", description: dag.name });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Update failed";
@@ -283,10 +317,15 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
               outcome={dag.outcome}
               variables={variables}
               edges={edges}
-              variable_roles={dag.variable_roles}
+              variable_roles={current.roles}
               selectedEdgeKey={selected ? edgeKey(selected) : null}
               onEdgeClick={setSelected}
               onConnect={handleConnect}
+              onNodesDeleteRequest={handleNodesDeleteRequest}
+              onUndo={() => setHistoryIndex(i => Math.max(0, i - 1))}
+              onRedo={() => setHistoryIndex(i => Math.min(history.length - 1, i + 1))}
+              canUndo={historyIndex > 0}
+              canRedo={historyIndex < history.length - 1}
               height="60vh"
             />
           </CardContent>
@@ -294,12 +333,19 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
         <VariableRolesPanel
           treatment={dag.treatment}
           outcome={dag.outcome}
-          variable_roles={dag.variable_roles}
+          variable_roles={current.roles}
           domain_expertises={dag.domain_expertises}
         />
       </div>
 
-      <EdgeReasoningSheet edge={selected} onClose={() => setSelected(null)} onDelete={handleDelete} />
+      {selected && (
+        <EdgeReasoningSheet
+          edge={selected}
+          open={!!selected}
+          onOpenChange={(o) => { if (!o) setSelected(null); }}
+          onDelete={() => { handleDeleteEdge(selected); setSelected(null); }}
+        />
+      )}
     </div>
   );
 }

@@ -22,20 +22,20 @@ function renderStyledValue(value: string) {
 }
 
 export default function ModelEvaluation({ selectedChannel, data, evaluationData }: ModelEvaluationProps) {
-  const descStats = evaluationData.descriptive_statistics[selectedChannel];
-  const evalResult = evaluationData.channel_evaluations[selectedChannel];
-  const bestModel = evaluationData.best_model_per_channel[selectedChannel];
-  const assocData = evaluationData.associative_vs_causal?.[selectedChannel];
+  const descStats = evaluationData?.descriptive_statistics?.[selectedChannel];
+  const evalResult = evaluationData?.channel_evaluations?.[selectedChannel];
+  const bestModel = evaluationData?.best_model_per_channel?.[selectedChannel];
+  const assocData = evaluationData?.associative_vs_causal?.[selectedChannel];
 
   // 1. Descriptive Statistics
   const renderDescStats = () => {
-    if (!descStats) return null;
+    if (!descStats || !descStats.stats) return null;
     return (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Descriptive Statistics</CardTitle>
           <CardDescription className="text-sm">
-            Comparison of treated vs control groups for {selectedChannel} ({descStats.n_treated} treated, {descStats.n_control} control).
+            Comparison of treated vs control groups for {selectedChannel} ({descStats.n_treated ?? 0} treated, {descStats.n_control ?? 0} control).
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -52,11 +52,11 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
               {descStats.stats.map((row) => (
                 <TableRow key={row.variable}>
                   <TableCell className="font-medium text-sm">{row.variable}</TableCell>
-                  <TableCell>{row.treated_mean.toFixed(2)}</TableCell>
-                  <TableCell>{row.control_mean.toFixed(2)}</TableCell>
+                  <TableCell>{row.treated_mean?.toFixed(2) ?? "N/A"}</TableCell>
+                  <TableCell>{row.control_mean?.toFixed(2) ?? "N/A"}</TableCell>
                   <TableCell>
-                    <span className={Math.abs(row.std_diff) > 0.1 ? "text-destructive" : ""}>
-                      {row.std_diff.toFixed(3)}
+                    <span className={Math.abs(row.std_diff ?? 0) > 0.1 ? "text-destructive" : ""}>
+                      {row.std_diff?.toFixed(3) ?? "N/A"}
                     </span>
                   </TableCell>
                 </TableRow>
@@ -70,7 +70,7 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
 
   // 2. Model Evaluation Metrics
   const renderMetricsTable = () => {
-    if (!evalResult) return null;
+    if (!evalResult || !evalResult.model_evaluations) return null;
     
     return (
       <Card>
@@ -100,10 +100,10 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
                       {isBest && <Trophy className="h-4 w-4 text-yellow-500" />}
                       {model.model_name}
                     </TableCell>
-                    <TableCell>{model.metrics.uplift_auc?.toFixed(4) ?? "N/A"}</TableCell>
-                    <TableCell>{model.metrics.qini_auc?.toFixed(4) ?? "N/A"}</TableCell>
-                    <TableCell>{model.metrics.precision_at_k?.toFixed(4) ?? "N/A"}</TableCell>
-                    <TableCell>{model.metrics.recall_at_k?.toFixed(4) ?? "N/A"}</TableCell>
+                    <TableCell>{model.metrics?.uplift_auc?.toFixed(4) ?? "N/A"}</TableCell>
+                    <TableCell>{model.metrics?.qini_auc?.toFixed(4) ?? "N/A"}</TableCell>
+                    <TableCell>{model.metrics?.precision_at_k?.toFixed(4) ?? "N/A"}</TableCell>
+                    <TableCell>{model.metrics?.recall_at_k?.toFixed(4) ?? "N/A"}</TableCell>
                   </TableRow>
                 );
               })}
@@ -116,13 +116,7 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
 
   // 3. Causal vs Associative
   const renderAssocCausal = () => {
-    if (!assocData) return null;
-    const rows = [
-      { metric: "Estimated Effect", associative: assocData.estimated_effect.associative, causal: assocData.estimated_effect.causal },
-      { metric: "Confounding Correction", associative: assocData.confounding_correction.associative, causal: assocData.confounding_correction.causal },
-      { metric: "Individual Targeting", associative: assocData.individual_targeting.associative, causal: assocData.individual_targeting.causal },
-      { metric: "Interpretation", associative: assocData.interpretation.associative, causal: assocData.interpretation.causal },
-    ];
+    if (!assocData || !assocData.estimated_effect) return null;
     return (
       <Card>
         <CardHeader>
@@ -132,24 +126,41 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Metric</TableHead>
-                <TableHead>Logistic Reg (Associative)</TableHead>
-                <TableHead>Causal Consensus</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.metric}>
-                  <TableCell className="font-medium text-sm">{row.metric}</TableCell>
-                  <TableCell>{renderStyledValue(row.associative)}</TableCell>
-                  <TableCell>{renderStyledValue(row.causal)}</TableCell>
+          <div className="space-y-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Metric</TableHead>
+                  <TableHead>Associative Baseline</TableHead>
+                  <TableHead>Causal Consensus</TableHead>
+                  <TableHead>Confounding Bias</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="font-medium text-sm">Estimated ATE</TableCell>
+                  <TableCell>{renderStyledValue(assocData.estimated_effect?.associative ?? "N/A")}</TableCell>
+                  <TableCell>{renderStyledValue(assocData.estimated_effect?.causal ?? "N/A")}</TableCell>
+                  <TableCell>
+                    <span className="font-mono text-sm">{assocData.confounding_correction?.bias}</span>
+                    <span className="text-muted-foreground ml-2 text-xs">
+                      ({assocData.confounding_correction?.bias_pct}) [{assocData.confounding_correction?.direction}]
+                    </span>
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="font-medium text-sm">Individual Targeting (CATE)</TableCell>
+                  <TableCell>{renderStyledValue(assocData.individual_targeting?.has_ite === "true" ? "✅ Supported" : "❌ Not supported")}</TableCell>
+                  <TableCell>{renderStyledValue("✅ Supported")}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">Causal models support segment-level and individual uplift</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+            <div className="bg-muted/30 p-4 rounded-lg border text-sm space-y-2">
+              <p><strong>Summary:</strong> {assocData.interpretation?.summary}</p>
+              <p><strong>Recommendation:</strong> {assocData.interpretation?.recommendation}</p>
+            </div>
+          </div>
         </CardContent>
       </Card>
     );
@@ -192,6 +203,16 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
       </Card>
     );
   };
+
+  if (!descStats && !evalResult) {
+    return (
+      <Card>
+        <CardContent className="py-12 flex flex-col items-center gap-4 text-center">
+          <p className="text-muted-foreground">No evaluation data available for channel: {selectedChannel}</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6">

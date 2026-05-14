@@ -11,25 +11,45 @@ export default function StepModelExecution({ onComplete, onBack }: { onComplete:
   const { sessionId } = useSession();
   const { toast } = useToast();
   const [status, setStatus] = useState<"idle" | "running" | "done">("idle");
+  const [pollingStatus, setPollingStatus] = useState<string>("");
 
   const handleRun = async () => {
     setStatus("running");
-    try {
-      if (sessionId) {
-        // Run main pipeline
-        await api.runCausalModels(sessionId);
-        // Run evaluation pipeline sequentially
-        await api.runEvaluation(sessionId);
-      } else {
-        // Simulate delay for demo
-        await new Promise((r) => setTimeout(r, 3000));
-      }
+    if (!sessionId) {
+      await new Promise((r) => setTimeout(r, 3000));
       setStatus("done");
-      toast({ title: "Causal estimates generated", description: "Redirecting to dashboard..." });
       setTimeout(onComplete, 1500);
-    } catch {
+      return;
+    }
+
+    try {
+      // 1. Trigger async analysis
+      await api.runAsyncAnalysis(sessionId);
+      
+      // 2. Start polling
+      const pollInterval = setInterval(async () => {
+        try {
+          const detail = await api.getSessionDetail(sessionId);
+          setPollingStatus(detail.status);
+
+          if (detail.status === "completed") {
+            clearInterval(pollInterval);
+            setStatus("done");
+            toast({ title: "Analysis complete", description: "Redirecting to dashboard..." });
+            setTimeout(onComplete, 1500);
+          } else if (detail.status === "failed") {
+            clearInterval(pollInterval);
+            setStatus("idle");
+            toast({ title: "Analysis failed", description: "An error occurred during execution.", variant: "destructive" });
+          }
+        } catch (err) {
+          console.error("Polling error", err);
+        }
+      }, 3000);
+      
+    } catch (err) {
       setStatus("idle");
-      toast({ title: "Model execution failed", variant: "destructive" });
+      toast({ title: "Failed to start analysis", variant: "destructive" });
     }
   };
 
@@ -59,9 +79,15 @@ export default function StepModelExecution({ onComplete, onBack }: { onComplete:
               <>
                 <Loader2 className="h-12 w-12 text-primary animate-spin" />
                 <div className="text-center">
-                  <h3 className="text-lg font-semibold">Running Causal Estimators...</h3>
+                  <h3 className="text-lg font-semibold">
+                    {pollingStatus === "evaluation_in_progress" 
+                      ? "Evaluating Models..." 
+                      : "Running Causal Estimators..."}
+                  </h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Computing ATE, ATT, CATE, and uplift segments. This may take a moment.
+                    {pollingStatus === "evaluation_in_progress"
+                      ? "Testing robustness and comparing models. Almost done."
+                      : "Computing ATE, ATT, CATE, and uplift segments. This may take a moment."}
                   </p>
                 </div>
                 <div className="w-full max-w-sm space-y-3">

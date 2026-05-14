@@ -91,7 +91,7 @@ async def execute_pipeline(
     if not session.get("imc_mapping"):
         raise ValueError("IMC mapping not set — call /map-campaigns first")
 
-    session_manager.update_session(session_id, status="running")
+
 
     try:
         result = run_pipeline(
@@ -105,13 +105,13 @@ async def execute_pipeline(
 
         # Override session_id to match the upload session
         result.session_id = session_id
-        session_manager.update_session(session_id, result=result, status="complete")
+        session_manager.update_session(session_id, result=result)
 
         logger.info(f"Pipeline complete for session {session_id[:8]}")
         return result
 
     except Exception as e:
-        session_manager.update_session(session_id, status="error")
+
         logger.error(f"Pipeline failed for session {session_id[:8]}: {e}")
         raise
 
@@ -149,8 +149,35 @@ async def execute_evaluation(
         session_manager.update_session(session_id, evaluation_result=result)
         logger.info(f"Evaluation complete for session {session_id[:8]}")
         return result
-
     except Exception as e:
         logger.error(f"Evaluation failed for session {session_id[:8]}: {e}")
         raise
+
+
+async def run_causal_analysis_task(
+    session_id: str,
+    col_mapping: ColumnMapping,
+    config: ModelingConfig | None = None,
+):
+    """
+    Background task wrapper that sequentially runs the modeling and evaluation pipelines.
+    Updates the session status to reflect progress and handles errors gracefully.
+    """
+    try:
+        # Step 1: Modeling
+        session_manager.update_session(session_id, status="modeling_in_progress")
+        await execute_pipeline(session_id, col_mapping, config)
+        
+        # Step 2: Evaluation
+        session_manager.update_session(session_id, status="evaluation_in_progress")
+        await execute_evaluation(session_id, col_mapping, config)
+        
+        # Step 3: Complete
+        session_manager.update_session(session_id, status="completed")
+        logger.info(f"Full causal analysis completed for session {session_id[:8]}")
+        
+    except Exception as e:
+        logger.error(f"Background task failed for session {session_id[:8]}: {e}")
+        session_manager.update_session(session_id, status="failed", error=str(e))
+
 

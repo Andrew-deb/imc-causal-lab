@@ -1,8 +1,8 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from app.schemas.modeling_schema import RunPipelineRequest, PipelineResult, ColumnMapping
-from app.services.modeling_service import execute_pipeline, build_column_mapping
+from app.services.modeling_service import execute_pipeline, build_column_mapping, run_causal_analysis_task
 from app.utils.error_handling import handle_route_errors, require_session
 
 logger = logging.getLogger(__name__)
@@ -65,3 +65,28 @@ async def run_pipeline_endpoint(request: RunPipelineRequest):
     return result
 
 
+@router.post("/run-async")
+@handle_route_errors("Pipeline execution (async)")
+async def run_pipeline_async_endpoint(request: RunPipelineRequest, background_tasks: BackgroundTasks):
+    """
+    Run the full causal inference pipeline asynchronously.
+    Returns immediately while processing continues in the background.
+    """
+    session = require_session(request.session_id)
+
+    if _is_real_mapping(request.column_mapping):
+        col_mapping = request.column_mapping
+    else:
+        raw_mapping = session.get("column_mapping")
+        if not raw_mapping:
+            raise HTTPException(status_code=400, detail="No column mapping found.")
+        col_mapping = build_column_mapping(raw_mapping)
+
+    # Queue the background task
+    background_tasks.add_task(
+        run_causal_analysis_task,
+        session_id=request.session_id,
+        col_mapping=col_mapping
+    )
+
+    return {"status": "processing", "session_id": request.session_id}

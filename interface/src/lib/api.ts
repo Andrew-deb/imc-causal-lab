@@ -383,6 +383,12 @@ export const api = {
       body: JSON.stringify({ session_id: sessionId }),
     }),
 
+  runAsyncAnalysis: (sessionId: string) =>
+    request<{ status: string; session_id: string }>("/modeling/run-async", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId }),
+    }),
+
   runEvaluation: (sessionId: string) =>
     request<EvaluationResponse>("/modeling/evaluate", {
       method: "POST",

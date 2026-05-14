@@ -247,7 +247,11 @@ export default function DAGCanvas({
                 variant="destructive"
                 size="sm"
                 className="shadow-sm gap-1.5 px-3 h-8 animate-in fade-in slide-in-from-right-4"
-                onClick={handleUiDelete}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleUiDelete();
+                }}
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete {selectedDeletableNodes.length === 1 ? `'${selectedDeletableNodes[0].id}'` : `${selectedDeletableNodes.length} nodes`}
