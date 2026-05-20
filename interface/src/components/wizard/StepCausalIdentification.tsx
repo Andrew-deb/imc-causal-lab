@@ -6,10 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Library, Sparkles, ExternalLink, ArrowLeft } from "lucide-react";
 import { useSession } from "@/contexts/SessionContext";
-import { useDAGLibrary, type SavedDAG } from "@/lib/dag-store";
+import { useDAGLibrary, type SavedDAG, type CausalEdgeFull } from "@/lib/dag-store";
 import { api } from "@/lib/api";
-import DAGCanvas from "@/components/dag/DAGCanvas";
+import DAGCanvas, { edgeKey } from "@/components/dag/DAGCanvas";
 import VariableRolesPanel from "@/components/dag/VariableRolesPanel";
+import EdgeReasoningSheet from "@/components/dag/EdgeReasoningSheet";
 import AIBuilder from "@/components/dag/AIBuilder";
 import { ROLE_COLORS } from "@/lib/causal-graph";
 
@@ -23,28 +24,60 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
 
   const dag = dags.find((d) => d.dag_id === pickedId) ?? null;
 
-  const handleAttach = (saved: SavedDAG) => {
-    setPickedId(saved.dag_id);
-    setSelectedDagId(saved.dag_id);
-    setMode("existing");
-  };
+  // Editable DAG state — history for undo/redo
+  const [editHistory, setEditHistory] = useState<Array<{ edges: CausalEdgeFull[]; variables: string[] }>>(
+    dag ? [{ edges: dag.edges, variables: dag.variables }] : []
+  );
+  const [histIdx, setHistIdx] = useState(0);
+  const [selectedEdge, setSelectedEdge] = useState<CausalEdgeFull | null>(null);
 
-  const attachAndNext = async (saved: SavedDAG) => {
-    setPickedId(saved.dag_id);
-    setSelectedDagId(saved.dag_id);
-    if (sessionId) {
-      try {
-        await api.attachDagToSession(sessionId, saved.dag_id);
-      } catch (err) {
-        console.error("Failed to attach DAG to session:", err);
-      }
-    }
-    onNext();
-  };
-
+  // Reset edit history when a new DAG is picked
   const choose = (id: string) => {
     setPickedId(id);
     setSelectedDagId(id);
+    const picked = dags.find((d) => d.dag_id === id);
+    if (picked) {
+      setEditHistory([{ edges: picked.edges, variables: picked.variables }]);
+      setHistIdx(0);
+    }
+    setSelectedEdge(null);
+  };
+
+  const currentEdit = editHistory[histIdx] ?? (dag ? { edges: dag.edges, variables: dag.variables } : null);
+
+  const pushEdit = (next: { edges: CausalEdgeFull[]; variables: string[] }) => {
+    const newHist = editHistory.slice(0, histIdx + 1);
+    newHist.push(next);
+    setEditHistory(newHist);
+    setHistIdx(newHist.length - 1);
+  };
+
+  const handleConnect = (source: string, target: string) => {
+    if (!currentEdit) return;
+    if (source === target) return;
+    if (currentEdit.edges.some((e) => e.source === source && e.target === target)) return;
+    pushEdit({
+      ...currentEdit,
+      edges: [...currentEdit.edges, {
+        source, target, confidence: 1.0, relationship_type: "direct",
+        reasoning: "Manually specified by domain expert.", origin: "manual",
+      }],
+    });
+  };
+
+  const handleDeleteEdge = (e: CausalEdgeFull) => {
+    if (!currentEdit) return;
+    pushEdit({ ...currentEdit, edges: currentEdit.edges.filter((x) => !(x.source === e.source && x.target === e.target)) });
+    setSelectedEdge(null);
+  };
+
+  const handleNodesDelete = (ids: string[]) => {
+    if (!currentEdit) return;
+    const idSet = new Set(ids);
+    pushEdit({
+      variables: currentEdit.variables.filter((v) => !idSet.has(v)),
+      edges: currentEdit.edges.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
+    });
   };
 
   // Attach the selected DAG to the session before proceeding
@@ -66,7 +99,14 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
         <Button variant="ghost" size="sm" onClick={() => setMode(null)} className="gap-1">
           <ArrowLeft className="h-4 w-4" /> Choose different option
         </Button>
-        <AIBuilder saveDag={save} onSaved={attachAndNext} embedded sessionId={sessionId} />
+        <AIBuilder saveDag={save} onSaved={async (saved: SavedDAG) => {
+          setPickedId(saved.dag_id);
+          setSelectedDagId(saved.dag_id);
+          if (sessionId) {
+            try { await api.attachDagToSession(sessionId, saved.dag_id); } catch {}
+          }
+          onNext();
+        }} embedded sessionId={sessionId} />
       </div>
     );
   }
@@ -136,7 +176,7 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
               </Select>
             )}
 
-            {dag && (
+            {dag && currentEdit && (
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-3">
                 <Card className="overflow-hidden">
                   <CardHeader className="pb-2">
@@ -154,15 +194,23 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
                         </span>
                       ))}
                     </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">You can edit this DAG before proceeding. Changes are not saved to the library.</p>
                   </CardHeader>
                   <CardContent className="p-0">
                     <DAGCanvas
                       treatment={dag.treatment}
                       outcome={dag.outcome}
-                      variables={dag.variables}
-                      edges={dag.edges}
+                      variables={Array.from(new Set([dag.treatment, dag.outcome, ...currentEdit.variables]))}
+                      edges={currentEdit.edges}
                       variable_roles={dag.variable_roles}
-                      readOnly
+                      selectedEdgeKey={selectedEdge ? edgeKey(selectedEdge) : null}
+                      onEdgeClick={setSelectedEdge}
+                      onConnect={handleConnect}
+                      onNodesDeleteRequest={handleNodesDelete}
+                      onUndo={() => setHistIdx(i => Math.max(0, i - 1))}
+                      onRedo={() => setHistIdx(i => Math.min(editHistory.length - 1, i + 1))}
+                      canUndo={histIdx > 0}
+                      canRedo={histIdx < editHistory.length - 1}
                       height="40vh"
                     />
                   </CardContent>
@@ -174,6 +222,14 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
                   domain_expertises={dag.domain_expertises}
                 />
               </div>
+            )}
+            {selectedEdge && (
+              <EdgeReasoningSheet
+                edge={selectedEdge}
+                open={!!selectedEdge}
+                onOpenChange={(o) => { if (!o) setSelectedEdge(null); }}
+                onDelete={() => handleDeleteEdge(selectedEdge)}
+              />
             )}
           </CardContent>
         </Card>

@@ -13,14 +13,28 @@ const RELATIONSHIP_COLOR: Record<CausalEdgeFull["relationship_type"], string> = 
 
 interface Props {
   edge: CausalEdgeFull | null;
-  onClose: () => void;
+  // Support both the legacy onClose pattern and the newer open/onOpenChange pattern
+  onClose?: () => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onDelete?: (edge: CausalEdgeFull) => void;
   readOnly?: boolean;
 }
 
-export default function EdgeReasoningSheet({ edge, onClose, onDelete, readOnly }: Props) {
+export default function EdgeReasoningSheet({ edge, onClose, open, onOpenChange, onDelete, readOnly }: Props) {
+  // Resolve open state: prefer explicit `open` prop, fallback to !!edge
+  const isOpen = open !== undefined ? open : !!edge;
+
+  // Resolve close handler: prefer onOpenChange, fallback to onClose
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      if (onOpenChange) onOpenChange(false);
+      else if (onClose) onClose();
+    }
+  };
+
   return (
-    <Sheet open={!!edge} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={isOpen} onOpenChange={handleOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md">
         {edge && (
           <>
@@ -68,7 +82,7 @@ export default function EdgeReasoningSheet({ edge, onClose, onDelete, readOnly }
                 <Button
                   variant="destructive"
                   size="sm"
-                  onClick={() => { onDelete(edge); onClose(); }}
+                  onClick={() => { onDelete(edge); handleOpenChange(false); }}
                   className="gap-1.5"
                 >
                   <Trash2 className="h-3.5 w-3.5" /> Delete Edge

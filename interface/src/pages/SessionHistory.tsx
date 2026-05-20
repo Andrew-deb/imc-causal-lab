@@ -489,8 +489,8 @@ export default function SessionHistory() {
                   >
                     <TableCell className="font-mono text-xs">{s.session_id}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(s.created_at).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-xs">{s.dataset_meta?.customers || "N/A"}</TableCell>
-                    <TableCell className="text-xs">{s.dataset_meta?.campaigns || "N/A"}</TableCell>
+                    <TableCell className="text-xs">{s.dataset_meta?.customers_rows ?? "N/A"}</TableCell>
+                    <TableCell className="text-xs">{s.dataset_meta?.campaigns_rows ?? "N/A"}</TableCell>
                     <TableCell>
                       <StatusPill
                         tone={s.status === "completed" ? "success" : s.status === "failed" ? "danger" : "info"}

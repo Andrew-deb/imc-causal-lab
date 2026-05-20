@@ -170,6 +170,7 @@ export interface ChannelResult {
   agreement_score: number;
   best_model: string;
   confidence_level: "good" | "weak" | "insufficient";
+  mean_outcome_control: number;
 }
 
 export interface CrossModelComparison {

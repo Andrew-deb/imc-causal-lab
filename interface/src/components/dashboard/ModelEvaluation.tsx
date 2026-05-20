@@ -187,7 +187,8 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
                 title={`Uplift Curve`}
                 curve={bestModelEvals.metrics.uplift_curve}
                 modelName={bestModel}
-                yLabel="Cumulative uplift"
+                yLabel="Cumulative uplift ($)"
+                yUnit="$"
               />
             )}
             {bestModelEvals.metrics.qini_curve && (
@@ -195,7 +196,8 @@ export default function ModelEvaluation({ selectedChannel, data, evaluationData 
                 title={`Qini Curve`}
                 curve={bestModelEvals.metrics.qini_curve}
                 modelName={bestModel}
-                yLabel="Qini gain"
+                yLabel="Qini gain (%)"
+                yUnit="%"
               />
             )}
           </div>

@@ -152,6 +152,8 @@ class ChannelResult(BaseModel):
     agreement_score: float
     best_model: str
     confidence_level: str
+    # Mean outcome (spending) for the control group — used to compute % lift
+    mean_outcome_control: float = 0.0
 
 class CrossModelComparison(BaseModel):
     metrics: list[dict]

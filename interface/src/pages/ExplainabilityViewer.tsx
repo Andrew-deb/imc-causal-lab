@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -11,7 +13,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  Workflow, Plus, Sparkles, Pencil, Trash2, ArrowLeft, Edit3,
+  Workflow, Plus, Sparkles, Pencil, Trash2, ArrowLeft, Edit3, Check, X,
 } from "lucide-react";
 import { useDAGLibrary, type SavedDAG, type CausalEdgeFull } from "@/lib/dag-store";
 import DAGCanvas, { edgeKey } from "@/components/dag/DAGCanvas";
@@ -32,7 +34,7 @@ type View =
   | { kind: "manual" };
 
 export default function ExplainabilityViewer() {
-  const { dags, save, remove } = useDAGLibrary();
+  const { dags, loading, save, remove } = useDAGLibrary();
   const [view, setView] = useState<View>({ kind: "library" });
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -99,9 +101,31 @@ export default function ExplainabilityViewer() {
         }
       />
 
-      {dags.length === 0 ? (
+      {loading ? (
+        /* Skeleton while DAGs are being fetched */
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(3)].map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-5 w-2/3" />
+                <Skeleton className="h-3 w-full mt-2" />
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Skeleton className="h-3 w-1/2" />
+                <Skeleton className="h-3 w-1/3" />
+                <div className="flex gap-1.5 pt-2">
+                  <Skeleton className="h-8 flex-1" />
+                  <Skeleton className="h-8 w-8" />
+                  <Skeleton className="h-8 w-8" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : dags.length === 0 ? (
+        /* Empty state — only shown after loading is complete */
         <Card><CardContent className="py-12 text-center text-muted-foreground text-sm">
-          No DAGs yet. Click <strong>Create New DAG</strong> to get started.
+          No DAGs yet. Click <strong>New DAG</strong> to get started.
         </CardContent></Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -202,6 +226,24 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
   const [historyIndex, setHistoryIndex] = useState(0);
   const [selected, setSelected] = useState<CausalEdgeFull | null>(null);
 
+  // Inline name editing
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName] = useState(dag.name);
+  const [currentName, setCurrentName] = useState(dag.name);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const startEditName = () => {
+    setDraftName(currentName);
+    setEditingName(true);
+    setTimeout(() => nameInputRef.current?.select(), 50);
+  };
+  const cancelEditName = () => { setEditingName(false); setDraftName(currentName); };
+  const confirmEditName = () => {
+    const trimmed = draftName.trim();
+    if (trimmed && trimmed !== currentName) setCurrentName(trimmed);
+    setEditingName(false);
+  };
+
   const current = history[historyIndex];
   const edges = current.edges;
   const variables = Array.from(new Set([dag.treatment, dag.outcome, ...current.variables]));
@@ -247,11 +289,11 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
 
   const persist = async () => {
     try {
-      await onSave({ ...dag, edges, variables: current.variables, variable_roles: current.roles });
-      toast({ title: "DAG updated", description: dag.name });
+      await onSave({ ...dag, name: currentName, edges, variables: current.variables, variable_roles: current.roles });
+      toast({ title: "DAG saved", description: currentName });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Update failed";
-      toast({ title: "Failed to update DAG", description: msg, variant: "destructive" });
+      toast({ title: "Failed to save DAG", description: msg, variant: "destructive" });
     }
   };
 
@@ -271,7 +313,7 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Delete "{dag.name}"?</AlertDialogTitle>
+                <AlertDialogTitle>Delete "{currentName}"?</AlertDialogTitle>
                 <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -284,9 +326,40 @@ function DAGDetail({ dag, onBack, onSave, onDelete }: {
       </div>
 
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Workflow className="h-6 w-6 text-primary" /> {dag.name}
-        </h1>
+        {/* Inline name editing */}
+        <div className="flex items-center gap-2">
+          <Workflow className="h-6 w-6 text-primary shrink-0" />
+          {editingName ? (
+            <div className="flex items-center gap-1.5">
+              <Input
+                ref={nameInputRef}
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") confirmEditName(); if (e.key === "Escape") cancelEditName(); }}
+                className="h-8 text-xl font-bold w-64"
+                autoFocus
+              />
+              <Button size="icon" variant="ghost" className="h-7 w-7 text-chart-2" onClick={confirmEditName}>
+                <Check className="h-4 w-4" />
+              </Button>
+              <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground" onClick={cancelEditName}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 group">
+              <h1 className="text-2xl font-bold">{currentName}</h1>
+              <Button
+                size="icon" variant="ghost"
+                className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={startEditName}
+                title="Edit name"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
           <Badge variant="outline" className="text-[10px]">
             {dag.creation_mode === "llm_assisted" ? "AI-Generated" : "Manual"}

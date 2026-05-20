@@ -367,11 +367,18 @@ def run_pipeline(
                 pbar.set_postfix_str(f"{channel_name} -> {estimator.name} [OK] ATE={result.ate:.2f}")
                 pbar.update(1)
 
+            # Compute mean outcome for control group (baseline spending)
+            # Used by frontend to compute % lift = ATE / mean_Y_control × 100
+            control_mask = T == 0
+            mean_y_control = float(np.mean(Y[control_mask])) if np.sum(control_mask) > 0 else float(np.mean(Y))
+
             # Build channel-level aggregation
             balance_status = balance_lookup.get(channel_name, "good")
             channel_result = _build_channel_result(
                 channel_name, model_results, balance_status
             )
+            channel_result.mean_outcome_control = round(mean_y_control, 4)
+
             cross = _build_cross_model_comparison(model_results)
 
             persuadables_pct = 0.0
@@ -417,6 +424,7 @@ def run_pipeline(
                     "channel": s.channel,
                     "consensus_ate": s.consensus_ate,
                     "confidence_level": s.confidence_level,
+                    "mean_outcome_control": channel_results[s.channel].mean_outcome_control,
                 }
                 for i, s in enumerate(ranked)
             ]

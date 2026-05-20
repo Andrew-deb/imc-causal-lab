@@ -16,6 +16,7 @@ interface CurveVisualizerProps {
   curve: CurveData;
   modelName?: string;
   yLabel?: string;
+  yUnit?: "$" | "%";
 }
 
 export function CurveVisualizer({
@@ -23,6 +24,7 @@ export function CurveVisualizer({
   curve,
   modelName = "Model",
   yLabel = "Cumulative Uplift",
+  yUnit,
 }: CurveVisualizerProps) {
   const fractions = curve?.fractions ?? [];
   const values = curve?.values ?? [];
@@ -33,6 +35,12 @@ export function CurveVisualizer({
     model: values[i] ?? 0,
     random: f * maxVal,
   }));
+
+  const fmtVal = (v: number) => {
+    if (yUnit === "$") return `$${v.toFixed(2)}`;
+    if (yUnit === "%") return `${(v * 100).toFixed(2)}%`;
+    return v.toFixed(3);
+  };
 
   return (
     <Card>
@@ -53,7 +61,7 @@ export function CurveVisualizer({
             />
             <YAxis
               tick={{ fontSize: 11 }}
-              tickFormatter={(v: number) => v.toFixed(3)}
+              tickFormatter={fmtVal}
               label={{ value: yLabel, angle: -90, position: "insideLeft", fontSize: 11 }}
             />
             <Tooltip
@@ -63,7 +71,7 @@ export function CurveVisualizer({
                 borderRadius: 8,
                 fontSize: 12,
               }}
-              formatter={(v: number) => v.toFixed(3)}
+              formatter={(v: number) => fmtVal(v)}
               labelFormatter={(v: number) => `Fraction: ${(v * 100).toFixed(0)}%`}
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
