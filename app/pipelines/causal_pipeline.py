@@ -18,6 +18,8 @@ from app.schemas.modeling_schema import (
     ChannelSummary,
     PipelineResult,
     EvaluationResponse,
+    EvaluationMetrics,
+    ModelEvaluationResult,
 )
 from app.pipelines.data_processing import (
     merge_datasets,
@@ -26,6 +28,7 @@ from app.pipelines.data_processing import (
     engineer_features,
 )
 from app.causal.estimators import get_all_estimators
+from app.causal.evaluation import compute_all_metrics, select_best_model
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +44,20 @@ def _build_channel_result(
     channel_name: str,
     model_results: dict[str, ModelResult],
     balance_status: str,
+    eval_best_model: str | None = None,
+    eval_best_uplift_auc: float | None = None,
+    eval_best_qini_auc: float | None = None,
 ) -> ChannelResult:
     """
     Aggregate multiple estimator results into a single ChannelResult.
 
-    - consensus_ate/att: Inverse-variance (CI-width) weighted average of valid models.
-    - agreement_score: 1 - (std / |mean|) of causal ATEs.
-    - best_model: the causal model with the tightest confidence interval.
-    - confidence_level: "high" / "medium" / "low" based on agreement + balance.
+    Model selection is driven by evaluation metrics (Uplift AUC) when available.
+    Falls back to narrowest-CI selection if evaluation data is not provided.
+
+    - consensus_ate/att: Best model's ATE/ATT (evaluation-selected).
+    - agreement_score: 1 - (std / |mean|) of causal ATEs (diagnostic).
+    - best_model: evaluation-selected model (by Uplift AUC).
+    - confidence_level: "high" / "medium" / "low" based on agreement + balance (diagnostic).
     """
     # Separate causal models from associative baseline
     lr = model_results.get("logistic_regression")
@@ -86,46 +95,27 @@ def _build_channel_result(
             confidence_level="low",
         )
 
-    # 2. CI-Weighted Consensus
-    weights = []
-    ates = []
-    atts = []
-    
-    best_model = "causal_forest"
-    narrowest_ci = float("inf")
-
-    for name, r in valid_causal_results.items():
-        ates.append(r.ate)
-        atts.append(r.att)
-        
-        if r.ate_ci and len(r.ate_ci) == 2:
-            ci_width = abs(r.ate_ci[1] - r.ate_ci[0])
-            if ci_width < narrowest_ci:
-                narrowest_ci = ci_width
-                best_model = name
-            
-            # Weight is inversely proportional to CI width
-            # (Adding a small constant to prevent division by zero)
-            weight = 1.0 / (ci_width + 1.0)
-        else:
-            # Model lacks a CI (e.g., T-Learner). 
-            # Give it a very low default weight (equivalent to CI width of 1000)
-            # so it doesn't dominate models that provide honest inference bounds.
-            weight = 0.001
-
-        weights.append(weight)
-
-    # Normalize weights and compute weighted average
-    weight_sum = sum(weights)
-    if weight_sum > 0:
-        normalized_weights = [w / weight_sum for w in weights]
-        consensus_ate = float(np.sum(np.array(ates) * np.array(normalized_weights)))
-        consensus_att = float(np.sum(np.array(atts) * np.array(normalized_weights)))
+    # 2. Model Selection — Evaluation-driven (Uplift AUC) or CI-width fallback
+    if eval_best_model and eval_best_model in valid_causal_results:
+        best_model = eval_best_model
     else:
-        consensus_ate = float(np.median(ates))
-        consensus_att = float(np.median(atts))
+        # Fallback: narrowest CI (only when evaluation metrics weren't computed)
+        best_model = "causal_forest"  # default
+        narrowest_ci = float("inf")
+        for name, r in valid_causal_results.items():
+            if r.ate_ci and len(r.ate_ci) == 2:
+                ci_width = abs(r.ate_ci[1] - r.ate_ci[0])
+                if ci_width < narrowest_ci:
+                    narrowest_ci = ci_width
+                    best_model = name
 
-    # 3. Agreement Score & Confidence Level
+    # Best model's ATE/ATT become the reported values
+    best_result = valid_causal_results[best_model]
+    consensus_ate = best_result.ate
+    consensus_att = best_result.att
+
+    # 3. Agreement Score & Confidence Level (diagnostics — trust layer)
+    ates = [r.ate for r in valid_causal_results.values()]
     ate_mean = np.mean(ates)
     ate_std = np.std(ates) if len(ates) > 1 else 0.0
     if abs(ate_mean) > 1e-6:
@@ -148,6 +138,8 @@ def _build_channel_result(
         agreement_score=round(float(agreement), 4),
         best_model=best_model,
         confidence_level=confidence_level,
+        best_model_uplift_auc=round(eval_best_uplift_auc, 6) if eval_best_uplift_auc is not None else None,
+        best_model_qini_auc=round(eval_best_qini_auc, 6) if eval_best_qini_auc is not None else None,
     )
 
 
@@ -372,10 +364,37 @@ def run_pipeline(
             control_mask = T == 0
             mean_y_control = float(np.mean(Y[control_mask])) if np.sum(control_mask) > 0 else float(np.mean(Y))
 
-            # Build channel-level aggregation
+            # ── Inline evaluation: compute metrics for each model ──
+            model_evals: dict[str, ModelEvaluationResult] = {}
+            for est_name, result in model_results.items():
+                ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
+                if len(ite) < len(T):
+                    full_ite = np.full(len(T), np.mean(ite) if len(ite) > 0 else 0.0)
+                    full_ite[:len(ite)] = ite
+                    ite = full_ite
+                try:
+                    metrics = compute_all_metrics(ite, T, Y, propensity_scores=None, k=0.10)
+                    model_evals[est_name] = ModelEvaluationResult(
+                        model_name=est_name, metrics=EvaluationMetrics(**metrics)
+                    )
+                except Exception:
+                    pass  # Skip models that fail metric computation
+
+            # Select best model by evaluation metrics (Uplift AUC + Qini tiebreaker)
+            eval_best = select_best_model(model_evals) if model_evals else None
+            eval_best_uplift_auc = None
+            eval_best_qini_auc = None
+            if eval_best and eval_best in model_evals:
+                eval_best_uplift_auc = model_evals[eval_best].metrics.uplift_auc
+                eval_best_qini_auc = model_evals[eval_best].metrics.qini_auc
+
+            # Build channel-level aggregation (evaluation-driven model selection)
             balance_status = balance_lookup.get(channel_name, "good")
             channel_result = _build_channel_result(
-                channel_name, model_results, balance_status
+                channel_name, model_results, balance_status,
+                eval_best_model=eval_best,
+                eval_best_uplift_auc=eval_best_uplift_auc,
+                eval_best_qini_auc=eval_best_qini_auc,
             )
             channel_result.mean_outcome_control = round(mean_y_control, 4)
 
@@ -467,10 +486,8 @@ def run_evaluation(
 
     Returns a dict ready for EvaluationResponse serialisation.
     """
-    from app.causal.evaluation import compute_all_metrics, select_best_model
     from app.pipelines.data_processing import compute_descriptive_statistics
     from app.schemas.modeling_schema import (
-        EvaluationMetrics, ModelEvaluationResult,
         ChannelEvaluationResult, EvaluationResponse,
     )
 
@@ -590,7 +607,20 @@ def run_evaluation(
             assoc_vs_causal: dict[str, AssociativeVsCausalComparison] = {}
             for ch, mr in channel_model_results.items():
                 balance_status = balance_lookup.get(ch, "good")
-                ch_result = _build_channel_result(ch, mr, balance_status)
+                eval_best = best_model_per_channel.get(ch)
+                eval_uplift = None
+                eval_qini = None
+                if eval_best and ch in channel_evals:
+                    eval_m = channel_evals[ch].model_evaluations.get(eval_best)
+                    if eval_m:
+                        eval_uplift = eval_m.metrics.uplift_auc
+                        eval_qini = eval_m.metrics.qini_auc
+                ch_result = _build_channel_result(
+                    ch, mr, balance_status,
+                    eval_best_model=eval_best,
+                    eval_best_uplift_auc=eval_uplift,
+                    eval_best_qini_auc=eval_qini,
+                )
                 assoc_vs_causal[ch] = _build_associative_vs_causal(
                     ch, mr, ch_result.consensus_ate
                 )

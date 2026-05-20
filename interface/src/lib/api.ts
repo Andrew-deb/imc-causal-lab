@@ -171,6 +171,8 @@ export interface ChannelResult {
   best_model: string;
   confidence_level: "good" | "weak" | "insufficient";
   mean_outcome_control: number;
+  best_model_uplift_auc?: number;
+  best_model_qini_auc?: number;
 }
 
 export interface CrossModelComparison {

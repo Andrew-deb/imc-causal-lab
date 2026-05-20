@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Library, Sparkles, ExternalLink, ArrowLeft } from "lucide-react";
+import { Library, Sparkles, ExternalLink, ArrowLeft, Maximize2 } from "lucide-react";
 import { useSession } from "@/contexts/SessionContext";
 import { useDAGLibrary, type SavedDAG, type CausalEdgeFull } from "@/lib/dag-store";
 import { api } from "@/lib/api";
@@ -13,6 +13,12 @@ import VariableRolesPanel from "@/components/dag/VariableRolesPanel";
 import EdgeReasoningSheet from "@/components/dag/EdgeReasoningSheet";
 import AIBuilder from "@/components/dag/AIBuilder";
 import { ROLE_COLORS } from "@/lib/causal-graph";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Mode = null | "existing" | "ai" | "studio";
 
@@ -30,6 +36,39 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
   );
   const [histIdx, setHistIdx] = useState(0);
   const [selectedEdge, setSelectedEdge] = useState<CausalEdgeFull | null>(null);
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [backupState, setBackupState] = useState<{
+    edges: CausalEdgeFull[];
+    variables: string[];
+    histIdx: number;
+    editHistory: Array<{ edges: CausalEdgeFull[]; variables: string[] }>;
+  } | null>(null);
+
+  const openFullscreen = () => {
+    if (!currentEdit) return;
+    setBackupState({
+      edges: [...currentEdit.edges],
+      variables: [...currentEdit.variables],
+      histIdx,
+      editHistory: [...editHistory],
+    });
+    setIsFullscreen(true);
+  };
+
+  const cancelFullscreen = () => {
+    if (backupState) {
+      setEditHistory(backupState.editHistory);
+      setHistIdx(backupState.histIdx);
+    }
+    setIsFullscreen(false);
+    setBackupState(null);
+  };
+
+  const commitFullscreen = () => {
+    setIsFullscreen(false);
+    setBackupState(null);
+  };
 
   // Reset edit history when a new DAG is picked
   const choose = (id: string) => {
@@ -179,13 +218,16 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
             {dag && currentEdit && (
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-3">
                 <Card className="overflow-hidden">
-                  <CardHeader className="pb-2">
+                  <CardHeader className="pb-2 relative">
                     <div className="flex items-center justify-between gap-2">
                       <CardTitle className="text-sm">{dag.name}</CardTitle>
-                      <Badge variant="outline" className="text-[10px]">
+                      <Badge variant="outline" className="text-[10px] mr-8">
                         {dag.creation_mode === "llm_assisted" ? "AI-Generated" : "Manual"}
                       </Badge>
                     </div>
+                    <Button variant="ghost" size="icon" onClick={openFullscreen} className="h-8 w-8 absolute top-2 right-2 z-10" title="Fullscreen Edit">
+                      <Maximize2 className="h-4 w-4" />
+                    </Button>
                     <div className="flex flex-wrap gap-3 mt-1">
                       {Object.entries(ROLE_COLORS).slice(0, 5).map(([role, color]) => (
                         <span key={role} className="flex items-center gap-1 text-[10px] text-muted-foreground capitalize">
@@ -231,6 +273,38 @@ export default function StepCausalIdentification({ onNext, onBack }: { onNext: (
                 onDelete={() => handleDeleteEdge(selectedEdge)}
               />
             )}
+
+            <Dialog open={isFullscreen} onOpenChange={(open) => { if (!open) cancelFullscreen(); }}>
+              <DialogContent className="max-w-[95vw] w-[95vw] h-[95vh] flex flex-col p-4">
+                <DialogHeader>
+                  <DialogTitle>DAG Editor (Fullscreen)</DialogTitle>
+                </DialogHeader>
+                <div className="flex-1 min-h-0 border rounded-lg overflow-hidden relative">
+                  {dag && currentEdit && (
+                    <DAGCanvas
+                      treatment={dag.treatment}
+                      outcome={dag.outcome}
+                      variables={Array.from(new Set([dag.treatment, dag.outcome, ...currentEdit.variables]))}
+                      edges={currentEdit.edges}
+                      variable_roles={dag.variable_roles}
+                      selectedEdgeKey={selectedEdge ? edgeKey(selectedEdge) : null}
+                      onEdgeClick={setSelectedEdge}
+                      onConnect={handleConnect}
+                      onNodesDeleteRequest={handleNodesDelete}
+                      onUndo={() => setHistIdx(i => Math.max(0, i - 1))}
+                      onRedo={() => setHistIdx(i => Math.min(editHistory.length - 1, i + 1))}
+                      canUndo={histIdx > 0}
+                      canRedo={histIdx < editHistory.length - 1}
+                      height="100%"
+                    />
+                  )}
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={cancelFullscreen}>Cancel</Button>
+                  <Button onClick={commitFullscreen}>Done</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
       )}

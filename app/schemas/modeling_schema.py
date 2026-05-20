@@ -154,6 +154,9 @@ class ChannelResult(BaseModel):
     confidence_level: str
     # Mean outcome (spending) for the control group — used to compute % lift
     mean_outcome_control: float = 0.0
+    # Evaluation metrics for the selected best model (populated by evaluation-driven selection)
+    best_model_uplift_auc: Optional[float] = None
+    best_model_qini_auc: Optional[float] = None
 
 class CrossModelComparison(BaseModel):
     metrics: list[dict]

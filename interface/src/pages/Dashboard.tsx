@@ -176,8 +176,8 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar, d
             </SelectContent>
           </Select>
           {isBestModel && (
-            <span className="text-[10px] font-semibold text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-950/40 border border-yellow-200 dark:border-yellow-800 px-1.5 py-0.5 rounded-full">
-              🏆 Best
+            <span className="text-[10px] font-semibold text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-950/40 border border-yellow-200 dark:border-yellow-800 px-1.5 py-0.5 rounded-full" title={channelData.best_model_qini_auc != null ? `Qini AUC: ${channelData.best_model_qini_auc.toFixed(4)}` : undefined}>
+              🏆 Best{channelData.best_model_uplift_auc != null ? ` · UAUC ${channelData.best_model_uplift_auc.toFixed(4)}` : ""}
             </span>
           )}
         </div>
