@@ -1,9 +1,11 @@
 import logging
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 
 from app.schemas.modeling_schema import RunPipelineRequest, PipelineResult, ColumnMapping
-from app.services.modeling_service import execute_pipeline, build_column_mapping, run_causal_analysis_task
+from app.services.modeling_service import execute_pipeline, execute_evaluation, build_column_mapping
 from app.utils.error_handling import handle_route_errors, require_session
+from app.services.job_service import job_manager
+from app.services.pipeline_queue import pipeline_queue
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/modeling", tags=["Modeling"])
@@ -67,11 +69,20 @@ async def run_pipeline_endpoint(request: RunPipelineRequest):
 
 @router.post("/run-async")
 @handle_route_errors("Pipeline execution (async)")
-async def run_pipeline_async_endpoint(request: RunPipelineRequest, background_tasks: BackgroundTasks):
+async def run_pipeline_async_endpoint(request: RunPipelineRequest):
     """
     Run the full causal inference pipeline asynchronously.
-    Returns immediately while processing continues in the background.
+    Creates both modeling and evaluation jobs and queues them sequentially.
+    Returns the job IDs immediately.
     """
+    # Check if queue has space for both jobs (causal + evaluation)
+    status = pipeline_queue.get_status()
+    if status["queued_count"] + 2 > status["max_queued"]:
+        raise HTTPException(
+            status_code=429,
+            detail=f"The job queue is full ({status['queued_count']}/{status['max_queued']} jobs queued). Please wait for active runs to complete."
+        )
+
     session = require_session(request.session_id)
 
     if _is_real_mapping(request.column_mapping):
@@ -82,11 +93,55 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest, background_ta
             raise HTTPException(status_code=400, detail="No column mapping found.")
         col_mapping = build_column_mapping(raw_mapping)
 
-    # Queue the background task
-    background_tasks.add_task(
-        run_causal_analysis_task,
+    # 1. Create modeling (causal) job
+    modeling_job_id = job_manager.create_job(
         session_id=request.session_id,
-        col_mapping=col_mapping
+        pipeline_type="causal",
+        config=None
     )
 
-    return {"status": "processing", "session_id": request.session_id}
+    # 2. Create evaluation job
+    evaluation_job_id = job_manager.create_job(
+        session_id=request.session_id,
+        pipeline_type="evaluation",
+        config=None
+    )
+
+    # Define task wrappers
+    async def run_modeling():
+        from app.services.session_service import session_manager
+        session_manager.update_session(request.session_id, status="modeling_in_progress")
+        try:
+            await execute_pipeline(
+                session_id=request.session_id,
+                col_mapping=col_mapping,
+                job_id=modeling_job_id
+            )
+        except Exception as e:
+            session_manager.update_session(request.session_id, status="failed", error=str(e))
+            raise
+
+    async def run_evaluation_task():
+        from app.services.session_service import session_manager
+        session_manager.update_session(request.session_id, status="evaluation_in_progress")
+        try:
+            await execute_evaluation(
+                session_id=request.session_id,
+                col_mapping=col_mapping,
+                job_id=evaluation_job_id
+            )
+            session_manager.update_session(request.session_id, status="completed")
+        except Exception as e:
+            session_manager.update_session(request.session_id, status="failed", error=str(e))
+            raise
+
+    # 3. Submit both to queue
+    pipeline_queue.submit(modeling_job_id, run_modeling)
+    pipeline_queue.submit(evaluation_job_id, run_evaluation_task)
+
+    return {
+        "status": "queued",
+        "session_id": request.session_id,
+        "modeling_job_id": modeling_job_id,
+        "evaluation_job_id": evaluation_job_id
+    }

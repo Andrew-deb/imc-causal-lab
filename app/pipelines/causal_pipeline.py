@@ -268,6 +268,8 @@ def run_pipeline(
     imc_mapping: dict[str, str],
     col_mapping: ColumnMapping,
     config: ModelingConfig | None = None,
+    job_id: str | None = None,
+    session_id: str | None = None,
 ) -> PipelineResult:
     """
     Execute the full causal inference pipeline.
@@ -288,6 +290,8 @@ def run_pipeline(
         imc_mapping: {"Email Marketing": "direct_marketing", ...}
         col_mapping: column name mapping
         config: optional overrides for modeling parameters
+        job_id: optional background job tracking ID
+        session_id: optional wizard upload session ID
 
     Returns:
         PipelineResult ready for API serialisation
@@ -295,9 +299,10 @@ def run_pipeline(
     if config is None:
         config = ModelingConfig()
 
-    session_id = str(uuid.uuid4())
+    if session_id is None:
+        session_id = str(uuid.uuid4())
 
-    with PipelineTracker("[IMC] CAUSAL PIPELINE", total_steps=7) as tracker:
+    with PipelineTracker("[IMC] CAUSAL PIPELINE", total_steps=7, job_id=job_id, session_id=session_id) as tracker:
 
         # ── Step 1: Merge ──────────────────────────────────────────
         with tracker.step(1, "Merging datasets") as s:
@@ -475,6 +480,8 @@ def run_evaluation(
     imc_mapping: dict[str, str],
     col_mapping: ColumnMapping,
     config: ModelingConfig | None = None,
+    job_id: str | None = None,
+    session_id: str | None = None,
 ) -> dict:
     """
     Run the evaluation pipeline: compute uplift metrics + descriptive stats.
@@ -494,9 +501,10 @@ def run_evaluation(
     if config is None:
         config = ModelingConfig()
 
-    session_id = str(uuid.uuid4())
+    if session_id is None:
+        session_id = str(uuid.uuid4())
 
-    with PipelineTracker("[IMC] EVALUATION PIPELINE", total_steps=6) as tracker:
+    with PipelineTracker("[IMC] EVALUATION PIPELINE", total_steps=6, job_id=job_id, session_id=session_id) as tracker:
 
         # ── Step 1: Merge ──────────────────────────────────────────
         with tracker.step(1, "Merging datasets") as s:

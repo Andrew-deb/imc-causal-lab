@@ -7,10 +7,15 @@ from app.storage.mongo_client import close_client
 from app.configs import settings
 
 
+from app.services.pipeline_queue import pipeline_queue
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: Start the background queue worker
+    pipeline_queue.start()
     yield  # App runs
-    # Cleanup on shutdown
+    # Shutdown: Stop the background queue worker and close connections
+    await pipeline_queue.stop()
     if getattr(settings, "USE_MONGO", False):
         close_client()
 

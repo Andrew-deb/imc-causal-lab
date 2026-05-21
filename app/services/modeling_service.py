@@ -77,6 +77,7 @@ async def execute_pipeline(
     session_id: str,
     col_mapping: ColumnMapping,
     config: ModelingConfig | None = None,
+    job_id: str | None = None,
 ) -> PipelineResult:
     """
     Run the full causal pipeline for a session.
@@ -91,8 +92,6 @@ async def execute_pipeline(
     if not session.get("imc_mapping"):
         raise ValueError("IMC mapping not set — call /map-campaigns first")
 
-
-
     try:
         result = run_pipeline(
             customers_df=session["customers_df"],
@@ -101,6 +100,8 @@ async def execute_pipeline(
             imc_mapping=session["imc_mapping"],
             col_mapping=col_mapping,
             config=config,
+            job_id=job_id,
+            session_id=session_id,
         )
 
         # Override session_id to match the upload session
@@ -120,6 +121,7 @@ async def execute_evaluation(
     session_id: str,
     col_mapping: ColumnMapping,
     config: ModelingConfig | None = None,
+    job_id: str | None = None,
 ):
     """
     Run the evaluation pipeline for a session.
@@ -144,8 +146,15 @@ async def execute_evaluation(
             imc_mapping=session["imc_mapping"],
             col_mapping=col_mapping,
             config=config,
+            job_id=job_id,
+            session_id=session_id,
         )
-        result.session_id = session_id
+        # result is a dict (EvaluationResponse format)
+        if isinstance(result, dict):
+            # run_evaluation returns a dict, but we should make sure it has session_id
+            result["session_id"] = session_id
+        else:
+            result.session_id = session_id
         session_manager.update_session(session_id, evaluation_result=result)
         logger.info(f"Evaluation complete for session {session_id[:8]}")
         return result

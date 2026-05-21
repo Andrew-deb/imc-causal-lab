@@ -114,6 +114,48 @@ export interface DAGListItem {
   created_at: string;
 }
 
+export interface PipelineStep {
+  step_number: number;
+  name: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  started_at?: string | null;
+  duration_ms?: number | null;
+  detail?: string | null;
+  error?: string | null;
+}
+
+export interface PipelineJob {
+  job_id: string;
+  session_id: string;
+  pipeline_type: "causal" | "evaluation";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  submitted_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  duration_seconds?: number | null;
+  config?: Record<string, any> | null;
+  steps: PipelineStep[];
+  error?: string | null;
+  result_snapshot?: Record<string, any> | null;
+}
+
+export interface QueueStatus {
+  running_count: number;
+  queued_count: number;
+  max_concurrent: number;
+  max_queued: number;
+}
+
+export interface SystemEvent {
+  event_id: string;
+  event_type: string;
+  severity: "info" | "warning" | "error";
+  session_id?: string | null;
+  message: string;
+  metadata?: Record<string, any> | null;
+  timestamp: string;
+}
+
 export interface DAGCreateRequest {
   name: string;
   description?: string;
@@ -387,7 +429,12 @@ export const api = {
     }),
 
   runAsyncAnalysis: (sessionId: string) =>
-    request<{ status: string; session_id: string }>("/modeling/run-async", {
+    request<{
+      status: string;
+      session_id: string;
+      modeling_job_id: string;
+      evaluation_job_id: string;
+    }>("/modeling/run-async", {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId }),
     }),
@@ -413,19 +460,6 @@ export const api = {
   // ── Sessions ──
   getSessions: () => request<SessionSummary[]>("/sessions"),
 
-  getSessionDetail: (sessionId: string) =>
-    request<{
-      session_id: string;
-      status: string;
-      created_at: string;
-      updated_at: string;
-      dataset_meta: Record<string, unknown> | null;
-      imc_mapping: Record<string, string> | null;
-      column_mapping: Record<string, string> | null;
-      dag_id: string | null;
-      has_results: boolean;
-      result?: Record<string, unknown> | null;
-    }>(`/sessions/${sessionId}`),
 
   // ── Detailed Comparison (no backend yet) ──
   getDetailedComparison: (sessionId: string) =>
@@ -433,4 +467,27 @@ export const api = {
 
   getTreatmentBalance: (sessionId: string) =>
     request<TreatmentBalanceResult[]>(`/sessions/${sessionId}/treatment-balance`),
+
+  // ── Pipeline Monitoring & Queue ──
+  getPipelineJobs: (sessionId?: string) =>
+    request<PipelineJob[]>(`/pipeline/jobs${sessionId ? `?session_id=${sessionId}` : ""}`),
+
+  getJobDetails: (jobId: string) =>
+    request<PipelineJob>(`/pipeline/jobs/${jobId}`),
+
+  cancelPipelineJob: (jobId: string) =>
+    request<{ status: string; message: string }>(`/pipeline/jobs/${jobId}`, {
+      method: "DELETE",
+    }),
+
+  getQueueStatus: () =>
+    request<QueueStatus>("/pipeline/queue/status"),
+
+  getSystemEvents: (sessionId?: string, severity?: string) => {
+    const params = new URLSearchParams();
+    if (sessionId) params.append("session_id", sessionId);
+    if (severity) params.append("severity", severity);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request<SystemEvent[]>(`/pipeline/logs/events${query}`);
+  },
 };

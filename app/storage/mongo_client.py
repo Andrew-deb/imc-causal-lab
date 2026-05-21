@@ -40,6 +40,17 @@ def get_dags_collection():
     return get_database()["causal_dags"]
 
 
+def get_pipeline_jobs_collection():
+    """Get the pipeline_jobs collection for status tracking."""
+    return get_database()["pipeline_jobs"]
+
+
+def get_events_collection():
+    """Get the events collection for logging system events."""
+    return get_database()["events"]
+
+
+
 def close_client():
     """Close the MongoDB connection (call on app shutdown)."""
     global _client

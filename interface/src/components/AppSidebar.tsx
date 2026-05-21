@@ -1,4 +1,4 @@
-import { Home, LayoutDashboard, PlusCircle, History, Workflow, Info, Boxes, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Home, LayoutDashboard, PlusCircle, History, Workflow, Info, Boxes, PanelLeftClose, PanelLeftOpen, Activity, ScrollText } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,8 @@ const groups = [
     label: "Workspace",
     items: [
       { title: "Home", url: "/", icon: Home, end: true },
+      { title: "Pipeline Monitor", url: "/monitor", icon: Activity },
+      { title: "Logs & Diagnostics", url: "/logs", icon: ScrollText },
       { title: "About Platform", url: "/about", icon: Info },
     ],
   },
