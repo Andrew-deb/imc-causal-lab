@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import APIRouter, UploadFile, File, Form
 from typing import Optional
@@ -40,7 +41,8 @@ async def upload_datasets(
 
     # Store the column mapping in the session for later use by the pipeline
     if parsed_mapping:
-        session_manager.update_session(
+        await asyncio.to_thread(
+            session_manager.update_session,
             result.session_id,
             column_mapping=parsed_mapping,
         )
@@ -50,7 +52,8 @@ async def upload_datasets(
     if roles:
         try:
             parsed_roles = json.loads(roles)
-            session_manager.update_session(
+            await asyncio.to_thread(
+                session_manager.update_session,
                 result.session_id,
                 dataset_roles=parsed_roles,
             )
@@ -62,13 +65,14 @@ async def upload_datasets(
 
 @router.get("/columns/{session_id}")
 @handle_route_errors("Get columns", status_code=404)
-async def get_columns(session_id: str):
+def get_columns(session_id: str):
     """Retrieve column names for a previously uploaded session."""
-    session = require_session(session_id)
+    session = require_session(session_id, include_datasets=False)
 
+    meta = session.get("dataset_meta", {})
     return {
         "session_id": session_id,
-        "customers_columns": session["customers_df"].columns.tolist(),
-        "transactions_columns": session["transactions_df"].columns.tolist(),
-        "campaigns_columns": session["campaigns_df"].columns.tolist(),
+        "customers_columns": meta.get("customers_columns") or (session["customers_df"].columns.tolist() if "customers_df" in session else []),
+        "transactions_columns": meta.get("transactions_columns") or (session["transactions_df"].columns.tolist() if "transactions_df" in session else []),
+        "campaigns_columns": meta.get("campaigns_columns") or (session["campaigns_df"].columns.tolist() if "campaigns_df" in session else []),
     }

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import pandas as pd
 from io import BytesIO
@@ -35,7 +36,8 @@ async def parse_and_store_datasets(
         "campaigns_columns": campaigns_df.columns.tolist(),
     }
 
-    session_id = session_manager.create_session(
+    session_id = await asyncio.to_thread(
+        session_manager.create_session,
         customers_df=customers_df,
         transactions_df=transactions_df,
         campaigns_df=campaigns_df,

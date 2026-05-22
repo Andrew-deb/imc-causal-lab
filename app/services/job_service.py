@@ -34,7 +34,7 @@ class JobManager:
     def __init__(self):
         self._store: dict[str, dict] = {}
 
-    def create_job(self, session_id: str, pipeline_type: str, config: Optional[dict] = None) -> str:
+    def create_job(self, session_id: str, pipeline_type: str, run_id: Optional[str] = None, config: Optional[dict] = None) -> str:
         job_id = f"job_{uuid.uuid4()}"
         now = datetime.now(timezone.utc)
 
@@ -54,6 +54,7 @@ class JobManager:
         self._store[job_id] = {
             "job_id": job_id,
             "session_id": session_id,
+            "run_id": run_id,
             "pipeline_type": pipeline_type,
             "status": "queued",
             "submitted_at": now,
@@ -119,11 +120,12 @@ class MongoJobManager:
         self._col = get_pipeline_jobs_collection()
         self._col.create_index("job_id", unique=True)
         self._col.create_index("session_id")
+        self._col.create_index("run_id")
         self._col.create_index([("status", 1), ("submitted_at", 1)])
         # 30-day TTL index on completed_at
         self._col.create_index("completed_at", expireAfterSeconds=2592000)
 
-    def create_job(self, session_id: str, pipeline_type: str, config: Optional[dict] = None) -> str:
+    def create_job(self, session_id: str, pipeline_type: str, run_id: Optional[str] = None, config: Optional[dict] = None) -> str:
         job_id = f"job_{uuid.uuid4()}"
         now = datetime.now(timezone.utc)
 
@@ -143,6 +145,7 @@ class MongoJobManager:
         doc = {
             "job_id": job_id,
             "session_id": session_id,
+            "run_id": run_id,
             "pipeline_type": pipeline_type,
             "status": "queued",
             "submitted_at": now,
@@ -156,13 +159,14 @@ class MongoJobManager:
         }
 
         self._col.insert_one(doc)
-        logger.info(f"Created MongoDB job: {job_id[:8]} ({pipeline_type}) for session {session_id[:8]}")
+        logger.info(f"Created MongoDB job: {job_id[:8]} ({pipeline_type}) for session {session_id[:8]} with run {run_id}")
         return job_id
 
     def get_job(self, job_id: str) -> Optional[dict]:
         return self._col.find_one({"job_id": job_id}, {"_id": 0})
 
     def update_job(self, job_id: str, **fields):
+        fields["updated_at"] = datetime.now(timezone.utc)
         self._col.update_one(
             {"job_id": job_id},
             {"$set": fields}
@@ -189,6 +193,7 @@ class MongoJobManager:
 
     def cancel_session_jobs(self, session_id: str) -> List[str]:
         now = datetime.now(timezone.utc)
+        
         cursor = self._col.find(
             {"session_id": session_id, "status": {"$in": ["queued", "running"]}},
             {"job_id": 1}
@@ -200,6 +205,7 @@ class MongoJobManager:
                 {"job_id": {"$in": cancelled_ids}},
                 {"$set": {"status": "cancelled", "completed_at": now}}
             )
+            
         return cancelled_ids
 
 

@@ -9,7 +9,7 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
 @router.get("/results/{session_id}", response_model=PipelineResult)
-async def get_results(session_id: str):
+def get_results(session_id: str):
     """
     Retrieve pipeline results for the dashboard.
     Must have run the pipeline first via POST /modeling/run-pipeline.
@@ -27,7 +27,7 @@ async def get_results(session_id: str):
 
 
 @router.get("/evaluation/{session_id}", response_model=EvaluationResponse)
-async def get_evaluation(session_id: str):
+def get_evaluation(session_id: str):
     """
     Retrieve evaluation metrics for the dashboard.
     Must have run the evaluation first via POST /modeling/evaluate.
@@ -48,7 +48,7 @@ async def get_evaluation(session_id: str):
 
 
 @router.get("/status/{session_id}")
-async def get_status(session_id: str):
+def get_status(session_id: str):
     """Check the current status of a session."""
     session = require_session(session_id)
 

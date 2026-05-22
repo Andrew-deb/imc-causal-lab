@@ -127,6 +127,7 @@ export interface PipelineStep {
 export interface PipelineJob {
   job_id: string;
   session_id: string;
+  run_id?: string | null;
   pipeline_type: "causal" | "evaluation";
   status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
   submitted_at: string;

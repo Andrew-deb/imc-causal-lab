@@ -5,6 +5,7 @@ Handles LLM-powered DAG discovery. Now supports two modes:
   1. Session mode: Extract variables from uploaded datasets
   2. Studio mode: Variables provided directly by the user
 """
+import asyncio
 import logging
 
 from app.services.session_service import session_manager
@@ -52,7 +53,7 @@ async def execute_dag_discovery(
     if not session_id:
         raise ValueError("Either session_id or variables must be provided")
 
-    session = session_manager.get_session(session_id)
+    session = await asyncio.to_thread(session_manager.get_session, session_id)
     if not session:
         raise ValueError(f"Session {session_id} not found")
 
@@ -67,20 +68,22 @@ async def execute_dag_discovery(
         elif isinstance(col_mapping, dict) and "transaction_amount_col" in col_mapping:
             outcome_col = col_mapping["transaction_amount_col"]
         else:
-            all_cols = session["transactions_df"].columns.tolist()
+            meta = session.get("dataset_meta", {})
+            all_cols = meta.get("transactions_columns", [])
             for candidate in ["price", "amount", "transaction_amount", "revenue", "spend"]:
                 if candidate in all_cols:
                     outcome_col = candidate
                     break
-            if not outcome_col:
+            if not outcome_col and all_cols:
                 outcome_col = all_cols[-1]
         logger.info(f"Auto-detected outcome: {outcome_col}")
 
-    # Collect all column names from the 3 uploaded datasets
+    # Collect all column names from the 3 uploaded datasets using dataset_meta
+    meta = session.get("dataset_meta", {})
     all_columns = set()
-    all_columns.update(session["customers_df"].columns.tolist())
-    all_columns.update(session["transactions_df"].columns.tolist())
-    all_columns.update(session["campaigns_df"].columns.tolist())
+    all_columns.update(meta.get("customers_columns", []))
+    all_columns.update(meta.get("transactions_columns", []))
+    all_columns.update(meta.get("campaigns_columns", []))
     all_columns = sorted(list(all_columns))
 
     # Run the discovery pipeline

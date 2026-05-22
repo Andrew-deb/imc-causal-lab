@@ -15,7 +15,7 @@ router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
 
 @router.get("")
-async def list_sessions():
+def list_sessions():
     """
     List all sessions with lightweight metadata.
     Returns session_id, status, created_at, dataset_meta, and flags
@@ -25,7 +25,7 @@ async def list_sessions():
 
 
 @router.get("/{session_id}")
-async def get_session_detail(session_id: str):
+def get_session_detail(session_id: str):
     """
     Get detailed session info (excluding raw DataFrames).
 
@@ -71,7 +71,7 @@ async def get_session_detail(session_id: str):
     return detail
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str):
+def delete_session(session_id: str):
     """
     Delete a session and all its associated data.
     """
@@ -83,7 +83,7 @@ async def delete_session(session_id: str):
 
 
 @router.get("/{session_id}/treatment-balance")
-async def get_treatment_balance(session_id: str):
+def get_treatment_balance(session_id: str):
     """
     Retrieve treatment balance results for a session.
     """
@@ -108,7 +108,7 @@ async def get_treatment_balance(session_id: str):
 
 
 @router.patch("/{session_id}/attach-dag")
-async def attach_dag_to_session(session_id: str, payload: dict):
+def attach_dag_to_session(session_id: str, payload: dict):
     """
     Attach a DAG from the library to a session.
 
@@ -135,12 +135,12 @@ async def attach_dag_to_session(session_id: str, payload: dict):
 
 
 @router.get("/{session_id}/data-preview")
-async def get_data_preview(session_id: str, rows: int = 5):
+def get_data_preview(session_id: str, rows: int = 5):
     """
     On-demand data preview — returns the first N rows from each stored dataset.
     Fetches from in-memory or Azure Blob depending on the storage backend.
     """
-    session = session_manager.get_session(session_id)
+    session = session_manager.get_session(session_id, include_datasets=True)
     if not session:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 

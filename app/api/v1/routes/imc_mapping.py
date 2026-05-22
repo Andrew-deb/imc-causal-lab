@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import APIRouter
 
@@ -37,16 +38,21 @@ async def map_campaigns(request: IMCMappingRequest):
         result = await map_capmpaign_types_to_imc(request)
 
     # Store mapping in session if session exists
-    session = require_session(request.session_id)
+    session = await asyncio.to_thread(require_session, request.session_id)
     if session:
         from app.services.session_service import session_manager
-        session_manager.update_session(request.session_id, imc_mapping=result.mapping, status="mapped")
+        await asyncio.to_thread(
+            session_manager.update_session,
+            request.session_id,
+            imc_mapping=result.mapping,
+            status="mapped"
+        )
 
     return result
 
 @router.post("/confirm-mapping")
 @handle_route_errors("IMC confirm mapping")
-async def confirm_mapping(request: IMCConfirmRequest):
+def confirm_mapping(request: IMCConfirmRequest):
     """
     Explicitly save the confirmed IMC mapping to the session.
     Used when the user edits the AI mapping or resumes a session.

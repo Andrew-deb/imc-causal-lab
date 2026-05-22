@@ -50,7 +50,7 @@ class SessionManager:
         logger.info(f"Session created: {session_id[:8]}")
         return session_id
 
-    def get_session(self, session_id: str) -> Optional[dict]:
+    def get_session(self, session_id: str, include_datasets: bool = False) -> Optional[dict]:
         """Retrieve full session data by ID."""
         return self._store.get(session_id)
 
@@ -145,14 +145,14 @@ class MongoSessionManager:
         return session_id
 
 
-    def get_session(self, session_id):
+    def get_session(self, session_id, include_datasets: bool = False):
         doc = self._col.find_one({"session_id": session_id}, {"_id": 0})
         if not doc:
             return None
 
-        # Reconstruct DataFrames by downloading them from Azure
+        # Reconstruct DataFrames by downloading them from Azure only if requested
         datasets = doc.pop("datasets", {})
-        if datasets:
+        if include_datasets and datasets:
             from app.storage.blob_client import download_parquet_to_dataframe
             
             doc["customers_df"] = download_parquet_to_dataframe(datasets["customers_blob"])

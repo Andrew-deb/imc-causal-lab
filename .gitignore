@@ -4,3 +4,4 @@
 venv
 *.cpython
 *.pyc
+/__pycache__

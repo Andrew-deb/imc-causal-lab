@@ -80,6 +80,7 @@ class MongoEventManager:
             "metadata": metadata or {},
             "timestamp": datetime.now(timezone.utc)
         }
+        
         self._col.insert_one(doc)
         doc.pop("_id", None)
         return doc

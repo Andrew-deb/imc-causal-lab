@@ -16,13 +16,13 @@ router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
 
 
 @router.get("/jobs", response_model=List[PipelineJobSchema])
-async def get_all_jobs(session_id: Optional[str] = None):
+def get_all_jobs(session_id: Optional[str] = None):
     """Retrieve all pipeline jobs, optionally filtered by session_id."""
     return job_manager.list_jobs(session_id=session_id)
 
 
 @router.get("/jobs/{job_id}", response_model=PipelineJobSchema)
-async def get_job_details(job_id: str):
+def get_job_details(job_id: str):
     """Retrieve detailed progress of a specific pipeline job."""
     job = job_manager.get_job(job_id)
     if not job:
@@ -36,7 +36,7 @@ async def cancel_job(job_id: str):
     success = pipeline_queue.cancel(job_id)
     if not success:
         # If it wasn't managed by the queue, check if it's already finished or doesn't exist
-        job = job_manager.get_job(job_id)
+        job = await asyncio.to_thread(job_manager.get_job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         if job["status"] in ("completed", "failed", "cancelled", "interrupted"):
@@ -45,12 +45,14 @@ async def cancel_job(job_id: str):
                 "message": f"Job is in terminal state: {job['status']}"
             }
         # Force cancel in database just in case
-        job_manager.update_job(
+        await asyncio.to_thread(
+            job_manager.update_job,
             job_id,
             status="cancelled",
             completed_at=datetime.now(timezone.utc)
         )
-        event_manager.log(
+        await asyncio.to_thread(
+            event_manager.log,
             event_type="job_cancelled",
             severity="info",
             session_id=job.get("session_id"),
@@ -61,7 +63,7 @@ async def cancel_job(job_id: str):
 
 
 @router.get("/queue/status", response_model=QueueStatusResponse)
-async def get_queue_status():
+def get_queue_status():
     """Retrieve current queue metrics (running/queued job counts)."""
     return pipeline_queue.get_status()
 
@@ -73,7 +75,7 @@ async def stream_job_progress(job_id: str):
     for a specific job. Closes when the job finishes.
     """
     # Check if the job exists first
-    job = job_manager.get_job(job_id)
+    job = await asyncio.to_thread(job_manager.get_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -81,7 +83,7 @@ async def stream_job_progress(job_id: str):
         last_state = None
         while True:
             try:
-                current_job = job_manager.get_job(job_id)
+                current_job = await asyncio.to_thread(job_manager.get_job, job_id)
                 if not current_job:
                     yield "data: {\"error\": \"Job not found in manager\"}\n\n"
                     break
@@ -129,7 +131,7 @@ async def stream_job_progress(job_id: str):
 
 
 @router.get("/logs/events")
-async def get_system_events(
+def get_system_events(
     session_id: Optional[str] = None,
     severity: Optional[str] = None,
     limit: int = 100

@@ -13,6 +13,7 @@ Layers:
 import logging
 import functools
 import traceback
+import asyncio
 from typing import Callable, TypeVar, Any
 from fastapi import HTTPException
 
@@ -43,20 +44,36 @@ def handle_route_errors(
         HTTPException(status_code=500, detail="Pipeline execution failed: <message>")
     """
     def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await func(*args, **kwargs)
-            except HTTPException:
-                raise  # Don't wrap existing HTTPExceptions
-            except Exception as e:
-                logger.error(f"{operation_name} failed: {e}")
-                logger.debug(traceback.format_exc())
-                raise HTTPException(
-                    status_code=status_code,
-                    detail=f"{operation_name} failed: {e}",
-                )
-        return wrapper
+        if asyncio.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                try:
+                    return await func(*args, **kwargs)
+                except HTTPException:
+                    raise  # Don't wrap existing HTTPExceptions
+                except Exception as e:
+                    logger.error(f"{operation_name} failed: {e}")
+                    logger.debug(traceback.format_exc())
+                    raise HTTPException(
+                        status_code=status_code,
+                        detail=f"{operation_name} failed: {e}",
+                    )
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                try:
+                    return func(*args, **kwargs)
+                except HTTPException:
+                    raise  # Don't wrap existing HTTPExceptions
+                except Exception as e:
+                    logger.error(f"{operation_name} failed: {e}")
+                    logger.debug(traceback.format_exc())
+                    raise HTTPException(
+                        status_code=status_code,
+                        detail=f"{operation_name} failed: {e}",
+                    )
+            return sync_wrapper
     return decorator
 
 
@@ -73,15 +90,26 @@ def handle_service_errors(operation_name: str):
             ...
     """
     def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                logger.error(f"[{operation_name}] {type(e).__name__}: {e}")
-                logger.debug(traceback.format_exc())
-                raise
-        return wrapper
+        if asyncio.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    logger.error(f"[{operation_name}] {type(e).__name__}: {e}")
+                    logger.debug(traceback.format_exc())
+                    raise
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    logger.error(f"[{operation_name}] {type(e).__name__}: {e}")
+                    logger.debug(traceback.format_exc())
+                    raise
+            return sync_wrapper
     return decorator
 
 
@@ -113,7 +141,7 @@ def safe_run(
         return fallback
 
 
-def require_session(session_id: str) -> dict:
+def require_session(session_id: str, include_datasets: bool = False) -> dict:
 
     """
     Validate that a session exists and return it.
@@ -122,7 +150,7 @@ def require_session(session_id: str) -> dict:
     Usage (in route handlers):
         session = require_session(session_store, request.session_id)
     """
-    session = session_manager.get_session(session_id)
+    session = session_manager.get_session(session_id, include_datasets=include_datasets)
     if not session:
         raise HTTPException(
             status_code=404,

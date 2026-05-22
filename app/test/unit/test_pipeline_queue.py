@@ -173,3 +173,75 @@ async def test_cascading_failure(mock_job_manager, mock_event_manager):
         )
 
         await queue.stop()
+
+
+@pytest.mark.asyncio
+async def test_startup_cleans_up_completed_jobs(mock_job_manager, mock_event_manager):
+    mock_session_manager = MagicMock()
+    
+    mock_job_manager.list_jobs.return_value = [
+        {
+            "job_id": "job_causal",
+            "session_id": "session_completed",
+            "pipeline_type": "causal",
+            "status": "running",
+            "steps": [{"step_number": 1, "name": "Step 1", "status": "running"}]
+        },
+        {
+            "job_id": "job_evaluation",
+            "session_id": "session_completed",
+            "pipeline_type": "evaluation",
+            "status": "queued",
+            "steps": [{"step_number": 1, "name": "Step 1", "status": "pending"}]
+        },
+        {
+            "job_id": "job_interrupted",
+            "session_id": "session_not_completed",
+            "pipeline_type": "causal",
+            "status": "running",
+            "steps": [{"step_number": 1, "name": "Step 1", "status": "running"}]
+        }
+    ]
+    
+    def get_session_side_effect(sid):
+        if sid == "session_completed":
+            return {
+                "session_id": "session_completed",
+                "result": {"some": "causal_result"},
+                "evaluation_result": {"some": "evaluation_result"}
+            }
+        return {
+            "session_id": "session_not_completed",
+            "result": None,
+            "evaluation_result": None
+        }
+    mock_session_manager.get_session.side_effect = get_session_side_effect
+
+    with patch("app.services.pipeline_queue.job_manager", mock_job_manager), \
+         patch("app.services.pipeline_queue.event_manager", mock_event_manager), \
+         patch("app.services.session_service.session_manager", mock_session_manager):
+         
+        queue = PipelineQueue(max_queued=3)
+        queue.start()
+        
+        mock_job_manager.update_job.assert_any_call(
+            "job_causal",
+            status="completed",
+            completed_at=ANY,
+            steps=[{"step_number": 1, "name": "Step 1", "status": "completed", "duration_ms": 0}]
+        )
+        mock_job_manager.update_job.assert_any_call(
+            "job_evaluation",
+            status="completed",
+            completed_at=ANY,
+            steps=[{"step_number": 1, "name": "Step 1", "status": "completed", "duration_ms": 0}]
+        )
+        mock_job_manager.update_job.assert_any_call(
+            "job_interrupted",
+            status="interrupted",
+            completed_at=ANY,
+            error="Server restarted during execution."
+        )
+        
+        await queue.stop()
+

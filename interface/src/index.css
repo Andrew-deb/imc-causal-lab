@@ -249,3 +249,30 @@
 .uplift-icon-moon svg { animation: uplift-fade-in 0.4s ease-out both; transition: filter 0.3s ease; }
 .group:hover .uplift-icon-moon svg { filter: brightness(1.5) drop-shadow(0 0 6px hsla(210, 20%, 85%, 0.6)); }
 @keyframes uplift-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Progress animations for running activity cards ──────────────────── */
+@keyframes progress-infinite {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+.animate-progress-infinite {
+  animation: progress-infinite 1.5s infinite linear;
+}
+
+@keyframes pulse-glowing {
+  0%, 100% {
+    opacity: 0.6;
+    box-shadow: 0 0 4px hsl(var(--warning) / 0.4);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 8px hsl(var(--warning) / 0.8);
+  }
+}
+.animate-pulse-glowing {
+  animation: pulse-glowing 2s infinite ease-in-out;
+}

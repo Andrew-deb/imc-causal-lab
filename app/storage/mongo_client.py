@@ -18,10 +18,22 @@ def get_client() -> MongoClient:
     """Get or create the MongoDB client (singleton)."""
     global _client
     if _client is None:
-        _client = MongoClient(settings.MONGODB_URI)
-        # Verify connection
-        _client.admin.command("ping")
-        logger.info("✅ Connected to MongoDB Atlas")
+        try:
+            # Use shorter timeouts (3s selection, 3s connection, 10s socket) to fail fast on network drops
+            # and retryReads/retryWrites for automatic recovery from transient glitches.
+            _client = MongoClient(
+                settings.MONGODB_URI,
+                serverSelectionTimeoutMS=3000,
+                connectTimeoutMS=3000,
+                socketTimeoutMS=10000,
+                retryReads=True,
+                retryWrites=True
+            )
+            # Verify connection
+            _client.admin.command("ping")
+            logger.info("✅ Connected to MongoDB Atlas")
+        except Exception as e:
+            logger.error(f"❌ Failed to connect/ping MongoDB Atlas: {e}")
     return _client
 
 

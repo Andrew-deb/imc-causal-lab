@@ -13,6 +13,7 @@ import NewAnalysis from "@/pages/NewAnalysis";
 import SessionHistory from "@/pages/SessionHistory";
 import ExplainabilityViewer from "@/pages/ExplainabilityViewer";
 import PipelineMonitor from "@/pages/PipelineMonitor";
+import PipelineRunDetail from "@/pages/PipelineRunDetail";
 import LogsDiagnostics from "@/pages/LogsDiagnostics";
 import About from "@/pages/About";
 import NotFound from "@/pages/NotFound";
@@ -37,6 +38,7 @@ const App = () => (
                   <Route path="/discover" element={<ExplainabilityViewer />} />
                   <Route path="/explainability" element={<ExplainabilityViewer />} />
                   <Route path="/monitor" element={<PipelineMonitor />} />
+                  <Route path="/monitor/:runId" element={<PipelineRunDetail />} />
                   <Route path="/logs" element={<LogsDiagnostics />} />
                   <Route path="/about" element={<About />} />
                   <Route path="*" element={<NotFound />} />

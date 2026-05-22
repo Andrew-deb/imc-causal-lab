@@ -23,6 +23,7 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const { toast } = useToast();
   
   const eventSourceRef = useRef<EventSource | null>(null);
+  const streamingJobIdRef = useRef<string | null>(null);
 
   const refreshQueueStatus = async () => {
     try {
@@ -39,12 +40,17 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const list = await api.getPipelineJobs(sessionId);
       setJobs(list);
       
-      // Auto-connect to the active job if there is one running/queued and we aren't streaming yet
-      if (!activeJob) {
-        const runningOrQueued = list.find(j => j.status === "running" || j.status === "queued");
-        if (runningOrQueued) {
-          startStreaming(runningOrQueued.job_id);
+      const active = list.find(j => j.status === "running" || j.status === "queued");
+      if (active) {
+        setActiveJob(active);
+        startStreaming(active.job_id);
+      } else {
+        setActiveJob(null);
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
         }
+        streamingJobIdRef.current = null;
       }
     } catch (e) {
       console.error("Failed to fetch jobs:", e);
@@ -54,10 +60,17 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const startStreaming = (jobId: string) => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+    if (streamingJobIdRef.current === jobId) {
+      console.log(`Already streaming job ${jobId}, skipping duplicate connection.`);
+      return;
     }
 
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    streamingJobIdRef.current = jobId;
     const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
     const sseUrl = `${API_BASE}/pipeline/stream/${jobId}`;
     console.log(`Connecting to SSE: ${sseUrl}`);
@@ -86,6 +99,10 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             description: `${jobData.pipeline_type === "causal" ? "Causal modeling" : "Evaluation"} completed successfully.`,
           });
           es.close();
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+            streamingJobIdRef.current = null;
+          }
           setActiveJob(null);
           refreshQueueStatus();
           refreshJobs();
@@ -96,6 +113,10 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             variant: "destructive",
           });
           es.close();
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+            streamingJobIdRef.current = null;
+          }
           setActiveJob(null);
           refreshQueueStatus();
           refreshJobs();
@@ -106,6 +127,10 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             variant: "destructive",
           });
           es.close();
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+            streamingJobIdRef.current = null;
+          }
           setActiveJob(null);
           refreshQueueStatus();
           refreshJobs();
@@ -118,6 +143,10 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     es.onerror = (err) => {
       console.error("SSE Connection error:", err);
       es.close();
+      if (eventSourceRef.current === es) {
+        eventSourceRef.current = null;
+        streamingJobIdRef.current = null;
+      }
       setActiveJob(null);
     };
   };
@@ -133,7 +162,9 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (activeJob?.job_id === jobId) {
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
+          eventSourceRef.current = null;
         }
+        streamingJobIdRef.current = null;
         setActiveJob(null);
       }
       refreshQueueStatus();
@@ -161,7 +192,9 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
+      streamingJobIdRef.current = null;
     };
   }, []);
 

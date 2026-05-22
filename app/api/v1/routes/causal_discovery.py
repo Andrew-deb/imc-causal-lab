@@ -10,6 +10,7 @@ Endpoints:
   PUT  /causal-discovery/dags/{dag_id}        — Update a saved DAG
   DELETE /causal-discovery/dags/{dag_id}      — Delete a saved DAG
 """
+import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 
@@ -46,7 +47,7 @@ async def discover_dag(request: DAGDiscoveryRequest):
     call /dags/verify-and-save to persist it to the library.
     """
     if request.session_id:
-        require_session(request.session_id)
+        await asyncio.to_thread(require_session, request.session_id)
 
     result = await execute_dag_discovery(
         session_id=request.session_id,
@@ -61,14 +62,14 @@ async def discover_dag(request: DAGDiscoveryRequest):
 
 @router.get("/dags", response_model=list[DAGListItem])
 @handle_route_errors("List DAGs")
-async def list_dags():
+def list_dags():
     """List all saved DAGs in the library."""
     return dag_library.list_dags()
 
 
 @router.get("/dags/{dag_id}", response_model=SavedDAG)
 @handle_route_errors("Get DAG", status_code=404)
-async def get_dag(dag_id: str):
+def get_dag(dag_id: str):
     """Get a specific saved DAG by ID."""
     dag = dag_library.get_dag(dag_id)
     if not dag:
@@ -78,7 +79,7 @@ async def get_dag(dag_id: str):
 
 @router.post("/dags", response_model=SavedDAG, status_code=201)
 @handle_route_errors("Create DAG")
-async def create_dag(request: DAGCreateRequest):
+def create_dag(request: DAGCreateRequest):
     """
     Save a manually built DAG to the library.
 
@@ -90,7 +91,7 @@ async def create_dag(request: DAGCreateRequest):
 
 @router.post("/dags/verify-and-save", response_model=SavedDAG, status_code=201)
 @handle_route_errors("Verify & Save DAG")
-async def verify_and_save_dag(request: DAGVerifyAndSaveRequest):
+def verify_and_save_dag(request: DAGVerifyAndSaveRequest):
     """
     Validate and save a DAG after LLM discovery + human verification.
 
@@ -104,7 +105,7 @@ async def verify_and_save_dag(request: DAGVerifyAndSaveRequest):
 
 @router.put("/dags/{dag_id}", response_model=SavedDAG)
 @handle_route_errors("Update DAG", status_code=404)
-async def update_dag(dag_id: str, request: DAGUpdateRequest):
+def update_dag(dag_id: str, request: DAGUpdateRequest):
     """Update an existing DAG's name, description, edges, or roles."""
     dag = dag_library.update_dag(dag_id, request)
     if not dag:
@@ -114,7 +115,7 @@ async def update_dag(dag_id: str, request: DAGUpdateRequest):
 
 @router.delete("/dags/{dag_id}", status_code=204)
 @handle_route_errors("Delete DAG", status_code=404)
-async def delete_dag(dag_id: str):
+def delete_dag(dag_id: str):
     """Delete a DAG from the library."""
     if not dag_library.delete_dag(dag_id):
         raise HTTPException(status_code=404, detail="DAG not found")

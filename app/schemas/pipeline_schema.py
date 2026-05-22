@@ -16,6 +16,7 @@ class PipelineStepSchema(BaseModel):
 class PipelineJobSchema(BaseModel):
     job_id: str
     session_id: str
+    run_id: Optional[str] = None
     pipeline_type: str  # "causal" | "evaluation"
     status: str  # "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
     submitted_at: datetime

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 
@@ -26,7 +27,7 @@ async def evaluate_models_endpoint(request: RunPipelineRequest):
       - Per-channel descriptive statistics (Treatment vs Control comparison)
       - Flattened performance summary table
     """
-    session = require_session(request.session_id)
+    session = await asyncio.to_thread(require_session, request.session_id)
     require_imc_mapping(session)
 
     # 1. Use inline column_mapping if provided with real values

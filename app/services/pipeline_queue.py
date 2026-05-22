@@ -22,30 +22,68 @@ class PipelineQueue:
     def start(self):
         """Start the background worker and clean up active/queued jobs from previous runs."""
         try:
+            from app.services.session_service import session_manager
             now = datetime.now(timezone.utc)
             jobs = job_manager.list_jobs()
             interrupted_count = 0
+            completed_count = 0
             for job in jobs:
                 if job.get("status") in ("queued", "running"):
                     job_id = job["job_id"]
-                    job_manager.update_job(
-                        job_id,
-                        status="interrupted",
-                        completed_at=now,
-                        error="Server restarted during execution."
-                    )
-                    event_manager.log(
-                        event_type="pipeline_interrupted",
-                        severity="warning",
-                        session_id=job.get("session_id"),
-                        message=f"Pipeline job {job_id[:8]} interrupted due to server restart",
-                        metadata={"job_id": job_id}
-                    )
-                    interrupted_count += 1
-            if interrupted_count > 0:
-                logger.info(f"Cleaned up {interrupted_count} interrupted jobs on startup.")
+                    session_id = job.get("session_id")
+                    pipeline_type = job.get("pipeline_type")
+                    
+                    # Check if session has already produced the results for this pipeline type
+                    completed_successfully = False
+                    if session_id:
+                        try:
+                            session = session_manager.get_session(session_id)
+                            if session:
+                                if pipeline_type == "causal" and session.get("result") is not None:
+                                    completed_successfully = True
+                                elif pipeline_type == "evaluation" and session.get("evaluation_result") is not None:
+                                    completed_successfully = True
+                        except Exception as e:
+                            logger.error(f"Error checking session results for job {job_id}: {e}")
+
+                    if completed_successfully:
+                        # Update all steps to completed
+                        steps = job.get("steps", [])
+                        updated_steps = []
+                        for s in steps:
+                            new_step = dict(s)
+                            if new_step.get("status") in ("pending", "running"):
+                                new_step["status"] = "completed"
+                                if new_step.get("duration_ms") is None:
+                                    new_step["duration_ms"] = 0
+                            updated_steps.append(new_step)
+
+                        job_manager.update_job(
+                            job_id,
+                            status="completed",
+                            completed_at=now,
+                            steps=updated_steps
+                        )
+                        completed_count += 1
+                    else:
+                        job_manager.update_job(
+                            job_id,
+                            status="interrupted",
+                            completed_at=now,
+                            error="Server restarted during execution."
+                        )
+                        event_manager.log(
+                            event_type="pipeline_interrupted",
+                            severity="warning",
+                            session_id=session_id,
+                            message=f"Pipeline job {job_id[:8]} interrupted due to server restart",
+                            metadata={"job_id": job_id}
+                        )
+                        interrupted_count += 1
+            if interrupted_count > 0 or completed_count > 0:
+                logger.info(f"Startup queue cleanup: completed {completed_count} jobs, interrupted {interrupted_count} jobs.")
         except Exception as e:
-            logger.error(f"Failed to clean up interrupted jobs on startup: {e}")
+            logger.error(f"Failed to clean up interrupted/completed jobs on startup: {e}")
 
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._worker())

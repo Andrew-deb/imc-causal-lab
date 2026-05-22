@@ -1,3 +1,5 @@
+import asyncio
+import uuid
 import logging
 from fastapi import APIRouter, HTTPException
 
@@ -44,7 +46,7 @@ async def run_pipeline_endpoint(request: RunPipelineRequest):
       - column_mapping (optional) — pass this when testing from Swagger.
         If omitted (or set to null), the mapping is pulled from the session.
     """
-    session = require_session(request.session_id)
+    session = await asyncio.to_thread(require_session, request.session_id)
 
     # 1. Use inline column_mapping if provided with real values
     if _is_real_mapping(request.column_mapping):
@@ -66,7 +68,6 @@ async def run_pipeline_endpoint(request: RunPipelineRequest):
     )
     return result
 
-
 @router.post("/run-async")
 @handle_route_errors("Pipeline execution (async)")
 async def run_pipeline_async_endpoint(request: RunPipelineRequest):
@@ -83,7 +84,7 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
             detail=f"The job queue is full ({status['queued_count']}/{status['max_queued']} jobs queued). Please wait for active runs to complete."
         )
 
-    session = require_session(request.session_id)
+    session = await asyncio.to_thread(require_session, request.session_id)
 
     if _is_real_mapping(request.column_mapping):
         col_mapping = request.column_mapping
@@ -93,24 +94,31 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
             raise HTTPException(status_code=400, detail="No column mapping found.")
         col_mapping = build_column_mapping(raw_mapping)
 
+    # Generate a unique run ID
+    run_id = f"run_{uuid.uuid4()}"
+
     # 1. Create modeling (causal) job
-    modeling_job_id = job_manager.create_job(
+    modeling_job_id = await asyncio.to_thread(
+        job_manager.create_job,
         session_id=request.session_id,
         pipeline_type="causal",
+        run_id=run_id,
         config=None
     )
 
     # 2. Create evaluation job
-    evaluation_job_id = job_manager.create_job(
+    evaluation_job_id = await asyncio.to_thread(
+        job_manager.create_job,
         session_id=request.session_id,
         pipeline_type="evaluation",
+        run_id=run_id,
         config=None
     )
 
     # Define task wrappers
     async def run_modeling():
         from app.services.session_service import session_manager
-        session_manager.update_session(request.session_id, status="modeling_in_progress")
+        await asyncio.to_thread(session_manager.update_session, request.session_id, status="modeling_in_progress")
         try:
             await execute_pipeline(
                 session_id=request.session_id,
@@ -118,21 +126,21 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
                 job_id=modeling_job_id
             )
         except Exception as e:
-            session_manager.update_session(request.session_id, status="failed", error=str(e))
+            await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error=str(e))
             raise
 
     async def run_evaluation_task():
         from app.services.session_service import session_manager
-        session_manager.update_session(request.session_id, status="evaluation_in_progress")
+        await asyncio.to_thread(session_manager.update_session, request.session_id, status="evaluation_in_progress")
         try:
             await execute_evaluation(
                 session_id=request.session_id,
                 col_mapping=col_mapping,
                 job_id=evaluation_job_id
             )
-            session_manager.update_session(request.session_id, status="completed")
+            await asyncio.to_thread(session_manager.update_session, request.session_id, status="completed")
         except Exception as e:
-            session_manager.update_session(request.session_id, status="failed", error=str(e))
+            await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error=str(e))
             raise
 
     # 3. Submit both to queue
@@ -142,6 +150,7 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
     return {
         "status": "queued",
         "session_id": request.session_id,
+        "run_id": run_id,
         "modeling_job_id": modeling_job_id,
         "evaluation_job_id": evaluation_job_id
     }

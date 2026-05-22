@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from app.schemas.modeling_schema import ColumnMapping, ModelingConfig, PipelineResult
@@ -85,7 +86,7 @@ async def execute_pipeline(
     Retrieves stored DataFrames + IMC mapping from the session,
     calls run_pipeline(), stores the result back in the session.
     """
-    session = session_manager.get_session(session_id)
+    session = await asyncio.to_thread(session_manager.get_session, session_id, include_datasets=True)
     if not session:
         raise ValueError(f"Session {session_id} not found")
 
@@ -93,7 +94,8 @@ async def execute_pipeline(
         raise ValueError("IMC mapping not set — call /map-campaigns first")
 
     try:
-        result = run_pipeline(
+        result = await asyncio.to_thread(
+            run_pipeline,
             customers_df=session["customers_df"],
             transactions_df=session["transactions_df"],
             campaigns_df=session["campaigns_df"],
@@ -106,7 +108,7 @@ async def execute_pipeline(
 
         # Override session_id to match the upload session
         result.session_id = session_id
-        session_manager.update_session(session_id, result=result)
+        await asyncio.to_thread(session_manager.update_session, session_id, result=result)
 
         logger.info(f"Pipeline complete for session {session_id[:8]}")
         return result
@@ -131,7 +133,7 @@ async def execute_evaluation(
     """
     from app.pipelines.causal_pipeline import run_evaluation
 
-    session = session_manager.get_session(session_id)
+    session = await asyncio.to_thread(session_manager.get_session, session_id, include_datasets=True)
     if not session:
         raise ValueError(f"Session {session_id} not found")
 
@@ -139,7 +141,8 @@ async def execute_evaluation(
         raise ValueError("IMC mapping not set — call /map-campaigns first")
 
     try:
-        result = run_evaluation(
+        result = await asyncio.to_thread(
+            run_evaluation,
             customers_df=session["customers_df"],
             transactions_df=session["transactions_df"],
             campaigns_df=session["campaigns_df"],
@@ -155,7 +158,7 @@ async def execute_evaluation(
             result["session_id"] = session_id
         else:
             result.session_id = session_id
-        session_manager.update_session(session_id, evaluation_result=result)
+        await asyncio.to_thread(session_manager.update_session, session_id, evaluation_result=result)
         logger.info(f"Evaluation complete for session {session_id[:8]}")
         return result
     except Exception as e:
@@ -174,19 +177,19 @@ async def run_causal_analysis_task(
     """
     try:
         # Step 1: Modeling
-        session_manager.update_session(session_id, status="modeling_in_progress")
+        await asyncio.to_thread(session_manager.update_session, session_id, status="modeling_in_progress")
         await execute_pipeline(session_id, col_mapping, config)
         
         # Step 2: Evaluation
-        session_manager.update_session(session_id, status="evaluation_in_progress")
+        await asyncio.to_thread(session_manager.update_session, session_id, status="evaluation_in_progress")
         await execute_evaluation(session_id, col_mapping, config)
         
         # Step 3: Complete
-        session_manager.update_session(session_id, status="completed")
+        await asyncio.to_thread(session_manager.update_session, session_id, status="completed")
         logger.info(f"Full causal analysis completed for session {session_id[:8]}")
         
     except Exception as e:
         logger.error(f"Background task failed for session {session_id[:8]}: {e}")
-        session_manager.update_session(session_id, status="failed", error=str(e))
+        await asyncio.to_thread(session_manager.update_session, session_id, status="failed", error=str(e))
 
 

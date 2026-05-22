@@ -16,11 +16,136 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
-} from "@/components/ui/dialog";
-import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger
 } from "@/components/ui/tooltip";
+import { api, SessionSummary, PipelineStep, PipelineJob } from "@/lib/api";
+
+interface PipelineFlowProps {
+  steps: PipelineStep[];
+  status: string;
+}
+
+export function PipelineFlow({ steps, status }: PipelineFlowProps) {
+  const getStepIcon = (stepStatus: string, stepNumber: number) => {
+    switch (stepStatus) {
+      case "completed":
+        return <CheckCircle2 className="h-4 w-4 text-success shrink-0" />;
+      case "failed":
+        return <X className="h-4 w-4 text-danger shrink-0" />;
+      case "running":
+        return <Loader2 className="h-4 w-4 text-warning animate-spin shrink-0" />;
+      case "skipped":
+        return <HelpCircle className="h-4 w-4 text-muted-foreground shrink-0" />;
+      case "pending":
+      default:
+        return (
+          <span className="text-[10px] font-mono font-bold bg-muted text-muted-foreground w-4 h-4 rounded-full flex items-center justify-center shrink-0">
+            {stepNumber}
+          </span>
+        );
+    }
+  };
+
+  const formatMs = (ms?: number | null) => {
+    if (ms === undefined || ms === null) return "";
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  };
+
+  return (
+    <div className="w-full overflow-x-auto py-3 px-1 flex items-center gap-2 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+      {steps.map((step, idx) => {
+        const isCompleted = step.status === "completed";
+        const isRunning = step.status === "running";
+        const isFailed = step.status === "failed";
+        const isPending = step.status === "pending";
+
+        let cardBorderColor = "border-border";
+        let cardBg = "bg-card";
+        let cardShadow = "";
+
+        if (isCompleted) {
+          cardBorderColor = "border-success/60 hover:border-success";
+          cardBg = "bg-success/5";
+        } else if (isRunning) {
+          cardBorderColor = "border-warning bg-warning/5 animate-pulse border-2";
+          cardShadow = "shadow-md shadow-warning/10";
+        } else if (isFailed) {
+          cardBorderColor = "border-danger";
+          cardBg = "bg-danger/5";
+          cardShadow = "shadow-sm shadow-danger/10";
+        } else if (isPending) {
+          cardBg = "bg-muted/10 opacity-70";
+        }
+
+        return (
+          <React.Fragment key={step.step_number}>
+            {/* Step Card */}
+            <div
+              className={`w-48 h-20 shrink-0 rounded-lg border p-2.5 relative overflow-hidden flex flex-col justify-between transition-all duration-300 ${cardBorderColor} ${cardBg} ${cardShadow}`}
+            >
+              <div className="flex items-start justify-between gap-1">
+                <span className={`text-[10px] font-semibold tracking-wide leading-tight truncate pr-1 ${isRunning ? "text-warning" : "text-foreground"}`}>
+                  {step.name}
+                </span>
+                {getStepIcon(step.status, step.step_number)}
+              </div>
+
+              <div className="flex items-center justify-between text-[9px] text-muted-foreground font-mono mt-1 z-10">
+                {step.duration_ms !== null && step.duration_ms !== undefined ? (
+                  <span className="flex items-center gap-0.5">
+                    <Clock className="h-2.5 w-2.5" />
+                    {formatMs(step.duration_ms)}
+                  </span>
+                ) : isRunning ? (
+                  <span className="flex items-center gap-1 text-[9px] font-sans font-medium text-warning">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-warning animate-pulse-glowing"></span>
+                    </span>
+                    In Progress
+                  </span>
+                ) : (
+                  <span />
+                )}
+                {step.detail && (
+                  <span 
+                    className="max-w-[100px] pr-1 truncate bg-muted/40 px-1 py-0.2 rounded font-sans" 
+                    title={step.detail}
+                  >
+                    {step.detail}
+                  </span>
+                )}
+              </div>
+
+              {/* Progress animation bar at the very bottom border of the card */}
+              {isRunning && (
+                <div className="absolute bottom-0 left-0 right-0 h-1 bg-warning/10 overflow-hidden">
+                  <div className="h-full bg-warning w-1/3 rounded-full animate-progress-infinite" />
+                </div>
+              )}
+            </div>
+
+            {/* Connecting Chevron Arrow */}
+            {idx < steps.length - 1 && (
+              <div className="flex items-center justify-center shrink-0 px-1">
+                <ChevronRight
+                  className={`h-4 w-4 transition-colors duration-300 ${
+                    isCompleted
+                      ? "text-success"
+                      : isRunning
+                      ? "text-warning animate-pulse"
+                      : "text-muted-foreground/30"
+                  }`}
+                />
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function PipelineMonitor() {
   const navigate = useNavigate();
@@ -35,10 +160,24 @@ export default function PipelineMonitor() {
   } = usePipeline();
 
   const [inspectedJobId, setInspectedJobId] = useState<string | null>(null);
+  const [sessionsList, setSessionsList] = useState<SessionSummary[]>([]);
+
+  const fetchSessions = async () => {
+    try {
+      const list = await api.getSessions();
+      setSessionsList(list);
+    } catch (e) {
+      console.error("Failed to fetch sessions metadata:", e);
+    }
+  };
 
   const handleRefresh = async () => {
-    await Promise.all([refreshJobs(), refreshQueueStatus()]);
+    await Promise.all([refreshJobs(), refreshQueueStatus(), fetchSessions()]);
   };
+
+  React.useEffect(() => {
+    fetchSessions();
+  }, []);
 
   const getStatusTone = (status: string) => {
     switch (status) {
@@ -81,32 +220,75 @@ export default function PipelineMonitor() {
     return `${(ms / 1000).toFixed(1)}s`;
   };
 
+  const formatRows = (num?: number) => {
+    if (num === undefined || num === null) return "0";
+    if (num >= 1000) return `${(num / 1000).toFixed(0)}k`;
+    return num.toLocaleString();
+  };
+
+  // Group jobs by run_id (or fallback to session_id / job_id for legacy jobs)
+  const groupJobsByRun = (jobsList: PipelineJob[]) => {
+    const groups: Record<string, PipelineJob[]> = {};
+    jobsList.forEach(job => {
+      const runKey = job.run_id || job.session_id || job.job_id;
+      if (!groups[runKey]) {
+        groups[runKey] = [];
+      }
+      groups[runKey].push(job);
+    });
+
+    return Object.entries(groups).map(([runId, runJobs]) => {
+      const earliestJob = [...runJobs].sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime())[0];
+      const sessionId = earliestJob.session_id;
+      const sessionSummary = sessionsList.find(s => s.session_id === sessionId);
+      
+      // Sort jobs by submitted_at ascending for creation time, descending for latest
+      const sortedJobs = [...runJobs].sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
+      const latestJob = sortedJobs[sortedJobs.length - 1];
+
+      let overallStatus = latestJob.status;
+      const hasRunning = runJobs.some(j => j.status === "running");
+      const hasQueued = runJobs.some(j => j.status === "queued");
+      const hasCompleted = runJobs.some(j => j.status === "completed");
+
+      if (hasRunning) {
+        overallStatus = "running";
+      } else if (hasQueued) {
+        overallStatus = "queued";
+      } else if (hasCompleted) {
+        overallStatus = "completed";
+      }
+
+      const totalDuration = runJobs.reduce((acc, j) => acc + (j.duration_seconds || 0), 0);
+
+      return {
+        run_id: runId,
+        session_id: sessionId,
+        created_at: earliestJob.submitted_at,
+        last_active: latestJob.submitted_at,
+        jobs: sortedJobs, // sorted chronological list of runs
+        status: overallStatus,
+        dataset_meta: sessionSummary?.dataset_meta || earliestJob.config?.dataset_meta || null,
+        total_duration: totalDuration,
+      };
+    }).sort((a, b) => new Date(b.last_active).getTime() - new Date(a.last_active).getTime());
+  };
+
+  const groupedRuns = groupJobsByRun(jobs);
+
+  const successRate = groupedRuns.length > 0
+    ? `${Math.round((groupedRuns.filter(r => r.status === "completed").length / groupedRuns.length) * 100)}%`
+    : "—";
+
+  const recentFailures = groupedRuns.filter(
+    (r) => r.status === "failed" || r.status === "interrupted"
+  ).length;
+
   // Extract jobs currently queued (excluding the active running job if there is one)
   const activeJobId = activeJob?.job_id;
   const queuedJobs = jobs.filter(
     (j) => j.status === "queued" && j.job_id !== activeJobId
   );
-
-  // Filter history: completed, failed, cancelled, interrupted, or active jobs that aren't currently running
-  const recentJobs = jobs.filter(
-    (j) => j.job_id !== activeJobId && j.status !== "queued"
-  );
-
-  const activeStepIdx = activeJob?.steps.findIndex((s) => s.status === "running") ?? -1;
-  const lastCompletedIdx = activeJob
-    ? [...activeJob.steps].reverse().findIndex((s) => s.status === "completed")
-    : -1;
-
-  const progressIdx = activeStepIdx !== -1
-    ? activeStepIdx
-    : lastCompletedIdx !== -1
-    ? activeJob!.steps.length - 1 - lastCompletedIdx
-    : 0;
-
-  const totalSteps = activeJob?.steps.length ?? 1;
-  const progressPercent = totalSteps > 1
-    ? (progressIdx / (totalSteps - 1)) * 100
-    : 0;
 
   const inspectedJob = jobs.find((j) => j.job_id === inspectedJobId);
 
@@ -248,143 +430,7 @@ export default function PipelineMonitor() {
                   </div>
                 </div>
               ) : (
-                <>
-                  {/* Stepper Desktop Layout */}
-                  <div className="hidden md:block">
-                    <div className="relative flex justify-between items-start w-full px-4">
-                      {/* Connection bar background */}
-                      <div className="absolute top-4 left-8 right-8 h-0.5 bg-border -z-10" />
-                      {/* Connected animated bar */}
-                      <div
-                        className="absolute top-4 left-8 h-0.5 bg-primary -z-10 transition-all duration-500"
-                        style={{ width: `calc(${progressPercent}% - 16px)` }}
-                      />
-
-                      {activeJob.steps.map((step, idx) => {
-                        const isPending = step.status === "pending";
-                        const isRunning = step.status === "running";
-                        const isCompleted = step.status === "completed";
-                        const isFailed = step.status === "failed";
-
-                        return (
-                          <div key={step.step_number} className="flex flex-col items-center w-28 text-center relative">
-                            {/* Circle Node */}
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div
-                                    className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${
-                                      isCompleted
-                                        ? "bg-success border-success text-white shadow-md shadow-success/15"
-                                        : isRunning
-                                        ? "bg-primary border-primary text-white shadow-md shadow-primary/25 animate-pulse"
-                                        : isFailed
-                                        ? "bg-danger border-danger text-white shadow-md shadow-danger/15"
-                                        : "bg-surface border-border text-muted-foreground"
-                                    }`}
-                                  >
-                                    {isCompleted ? (
-                                      <CheckCircle2 className="h-4 w-4" />
-                                    ) : isRunning ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : isFailed ? (
-                                      <X className="h-4 w-4" />
-                                    ) : (
-                                      <span className="text-xs font-semibold">{step.step_number}</span>
-                                    )}
-                                  </div>
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <div className="text-xs space-y-1">
-                                    <div className="font-semibold">{step.name}</div>
-                                    <div className="text-muted-foreground text-[10px]">
-                                      Status: <span className="capitalize">{step.status}</span>
-                                    </div>
-                                    {step.detail && <div className="text-foreground">{step.detail}</div>}
-                                    {step.error && <div className="text-danger font-mono text-[9px]">{step.error}</div>}
-                                  </div>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-
-                            {/* Label */}
-                            <span className={`text-[11px] font-medium mt-2 leading-tight ${isRunning ? "text-primary font-bold" : "text-muted-foreground"}`}>
-                              {step.name}
-                            </span>
-                            {/* Time & detail snippet */}
-                            {step.duration_ms !== null && step.duration_ms !== undefined && (
-                              <span className="text-[10px] text-muted-foreground font-mono mt-0.5">
-                                {formatMs(step.duration_ms)}
-                              </span>
-                            )}
-                            {step.detail && (
-                              <span className="text-[9px] bg-surface-sunken text-muted-foreground border border-border/40 rounded px-1 mt-1 truncate max-w-[100px]" title={step.detail}>
-                                {step.detail}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Stepper Mobile Layout */}
-                  <div className="md:hidden space-y-4">
-                    {activeJob.steps.map((step) => {
-                      const isPending = step.status === "pending";
-                      const isRunning = step.status === "running";
-                      const isCompleted = step.status === "completed";
-                      const isFailed = step.status === "failed";
-
-                      return (
-                        <div key={step.step_number} className="flex gap-3">
-                          <div className="flex flex-col items-center">
-                            <div
-                              className={`w-7 h-7 rounded-full flex items-center justify-center border-2 shrink-0 ${
-                                isCompleted
-                                  ? "bg-success border-success text-white"
-                                  : isRunning
-                                  ? "bg-primary border-primary text-white animate-pulse"
-                                  : isFailed
-                                  ? "bg-danger border-danger text-white"
-                                  : "bg-surface border-border text-muted-foreground"
-                              }`}
-                            >
-                              {isCompleted ? (
-                                <CheckCircle2 className="h-3 w-3" />
-                              ) : isRunning ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : isFailed ? (
-                                <X className="h-3 w-3" />
-                              ) : (
-                                <span className="text-[10px] font-semibold">{step.step_number}</span>
-                              )}
-                            </div>
-                            <div className="w-0.5 h-full bg-border mt-1" />
-                          </div>
-                          <div className="flex-1 pb-4 min-w-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <h5 className={`text-xs font-semibold ${isRunning ? "text-primary" : "text-foreground"}`}>
-                                {step.name}
-                              </h5>
-                              <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-                                {formatMs(step.duration_ms)}
-                              </span>
-                            </div>
-                            {step.detail && (
-                              <p className="text-[10px] text-muted-foreground mt-0.5 italic">{step.detail}</p>
-                            )}
-                            {step.error && (
-                              <div className="text-[10px] text-danger font-mono mt-1 p-2 bg-danger-soft/10 border border-danger/10 rounded">
-                                {step.error}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
+                <PipelineFlow steps={activeJob.steps} status={activeJob.status} />
               )}
 
               {/* Exception Trace Panel */}
@@ -485,76 +531,123 @@ export default function PipelineMonitor() {
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {recentJobs.length === 0 ? (
+          {groupedRuns.length === 0 ? (
             <div className="py-8 text-center text-xs text-muted-foreground">
-              No historical runs found. Completed jobs will show here.
+              No historical runs found. Completed sessions will show here.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[140px]">Pipeline Job</TableHead>
-                    <TableHead>Session ID</TableHead>
-                    <TableHead>Submitted</TableHead>
-                    <TableHead>Duration</TableHead>
+                    <TableHead>Pipeline Run</TableHead>
+                    <TableHead>Dataset Context</TableHead>
+                    <TableHead>Execution Stages</TableHead>
+                    <TableHead>Last Active</TableHead>
+                    <TableHead>Total Duration</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recentJobs.map((job) => {
-                    const isCompleted = job.status === "completed";
-                    const isFailed = job.status === "failed" || job.status === "interrupted";
+                  {groupedRuns.map((run) => {
+                    const hasResults = run.status === "completed";
+                    const formattedRunId = run.run_id.startsWith("run_")
+                      ? run.run_id.slice(4, 16)
+                      : run.run_id.slice(0, 12);
 
                     return (
-                      <TableRow key={job.job_id} className="hover:bg-muted/20">
+                      <TableRow key={run.run_id} className="hover:bg-muted/20">
+                        {/* Pipeline Run ID & Session ID */}
                         <TableCell className="font-medium text-xs">
                           <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold text-foreground">
-                              {job.pipeline_type === "causal" ? "Causal Modeling" : "Evaluation"}
+                            <span className="font-bold text-foreground truncate max-w-[150px]" title={run.run_id}>
+                              Run: {formattedRunId}...
                             </span>
-                            <span className="font-mono text-[10px] text-muted-foreground">
-                              {job.job_id.slice(0, 8)}
+                            <span className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={run.session_id}>
+                              Session: {run.session_id.slice(0, 12)}...
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="font-mono text-[11px] text-muted-foreground">
-                          {job.session_id.slice(0, 12)}...
+
+                        {/* Dataset Context */}
+                        <TableCell className="text-xs">
+                          {run.dataset_meta ? (
+                            <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                              Customers: {formatRows(run.dataset_meta.customers_rows)} | Transactions: {formatRows(run.dataset_meta.transactions_rows)} | Campaigns: {formatRows(run.dataset_meta.campaigns_rows)}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground">No dataset meta</span>
+                          )}
                         </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {relTime(job.submitted_at)}
-                        </TableCell>
-                        <TableCell className="text-xs font-mono">
-                          {formatDuration(job.duration_seconds)}
-                        </TableCell>
+
+                        {/* Execution Stages */}
                         <TableCell>
-                          <StatusPill tone={getStatusTone(job.status)}>{job.status}</StatusPill>
+                          <div className="flex flex-wrap gap-1.5">
+                            {run.jobs.map((job) => {
+                              let dotColor = "bg-muted-foreground";
+                              if (job.status === "completed") dotColor = "bg-success";
+                              else if (job.status === "running") dotColor = "bg-warning";
+                              else if (job.status === "failed" || job.status === "interrupted") dotColor = "bg-danger";
+                              else if (job.status === "queued") dotColor = "bg-info";
+
+                              return (
+                                <span
+                                  key={job.job_id}
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-muted/60 text-muted-foreground border border-border/80"
+                                >
+                                  <span className={`relative flex h-1.5 w-1.5`}>
+                                    {job.status === "running" && (
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"></span>
+                                    )}
+                                    <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${dotColor}`}></span>
+                                  </span>
+                                  {job.pipeline_type === "causal" ? "Causal Modeling" : "Evaluation"}
+                                </span>
+                              );
+                            })}
+                          </div>
                         </TableCell>
+
+                        {/* Last Active */}
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {relTime(run.last_active)}
+                        </TableCell>
+
+                        {/* Total Duration */}
+                        <TableCell className="text-xs font-mono whitespace-nowrap">
+                          {formatDuration(run.total_duration)}
+                        </TableCell>
+
+                        {/* Status */}
+                        <TableCell>
+                          <StatusPill tone={getStatusTone(run.status)}>{run.status}</StatusPill>
+                        </TableCell>
+
+                        {/* Actions */}
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1.5">
-                            {isCompleted && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground gap-1"
+                              asChild
+                            >
+                              <Link to={`/monitor/${run.run_id}`}>
+                                View Details
+                              </Link>
+                            </Button>
+                            {hasResults && (
                               <Button
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 text-xs px-2 text-primary hover:text-primary-foreground hover:bg-primary gap-1"
                                 asChild
                               >
-                                <Link to={`/dashboard?session_id=${job.session_id}`}>
+                                <Link to={`/dashboard?session_id=${run.session_id}`}>
                                   <ExternalLink className="h-3 w-3" />
                                   Dashboard
                                 </Link>
-                              </Button>
-                            )}
-                            {isFailed && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 text-xs px-2 text-danger hover:text-danger-foreground hover:bg-danger gap-1"
-                                onClick={() => setInspectedJobId(job.job_id)}
-                              >
-                                <Terminal className="h-3 w-3" />
-                                Inspect Error
                               </Button>
                             )}
                           </div>
@@ -568,69 +661,6 @@ export default function PipelineMonitor() {
           )}
         </CardContent>
       </Card>
-
-      {/* Inspect Error Dialog */}
-      <Dialog open={!!inspectedJobId} onOpenChange={(open) => !open && setInspectedJobId(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto font-sans">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-danger text-base">
-              <AlertTriangle className="h-5 w-5" /> Inspect Pipeline Failure Trace
-            </DialogTitle>
-            <DialogDescription className="font-mono text-[11px]">
-              Job ID: {inspectedJob?.job_id} | Session: {inspectedJob?.session_id}
-            </DialogDescription>
-          </DialogHeader>
-          {inspectedJob && (
-            <div className="space-y-4 mt-2">
-              <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-muted/40 p-3 rounded border border-border">
-                <div>
-                  <span className="text-muted-foreground block text-[10px] font-sans">SUBMITTED</span>
-                  {new Date(inspectedJob.submitted_at).toLocaleString()}
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[10px] font-sans">DURATION</span>
-                  {formatDuration(inspectedJob.duration_seconds)}
-                </div>
-              </div>
-
-              {/* Steps overview */}
-              <div className="space-y-1.5">
-                <h4 className="text-xs font-bold text-foreground">Step Execution Summary:</h4>
-                <div className="border border-border rounded overflow-hidden divide-y divide-border text-xs">
-                  {inspectedJob.steps.map((step) => (
-                    <div key={step.step_number} className="flex items-center justify-between p-2.5 bg-surface">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-muted-foreground font-mono text-[11px]">
-                          #{step.step_number}
-                        </span>
-                        <span>{step.name}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-muted-foreground font-mono">
-                          {formatMs(step.duration_ms)}
-                        </span>
-                        <StatusPill tone={getStatusTone(step.status)}>{step.status}</StatusPill>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Expanded Error block */}
-              <div className="space-y-1.5">
-                <h4 className="text-xs font-bold text-foreground flex items-center gap-1">
-                  <Terminal className="h-3.5 w-3.5" /> Exception Traceback:
-                </h4>
-                <div className="bg-surface-sunken border border-border/80 rounded p-4 font-mono text-[11px] text-danger max-h-72 overflow-y-auto whitespace-pre-wrap">
-                  {inspectedJob.steps.find((s) => s.status === "failed")?.error ||
-                    inspectedJob.error ||
-                    "No traceback or exception text saved for this run."}
-                </div>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
