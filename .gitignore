@@ -4,4 +4,6 @@
 venv
 *.cpython
 *.pyc
-/__pycache__
+*__pycache__*
+.pytest_cache
+schemas/__pycache__

@@ -234,6 +234,8 @@ class PipelineTracker:
                     started_at = job["started_at"]
                     if isinstance(started_at, str):
                         started_at = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
                     now = datetime.now(timezone.utc)
                     duration_seconds = (now - started_at).total_seconds()
 
