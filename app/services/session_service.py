@@ -225,10 +225,18 @@ class MongoSessionManager:
 def _create_session_manager():
     """Create the appropriate session manager based on config."""
     if getattr(settings, "USE_MONGO", False) and settings.MONGODB_URI:
-        logger.info("Using MongoDB session manager")
-        return MongoSessionManager()
+        try:
+            logger.info("Using MongoDB session manager")
+            return MongoSessionManager()
+        except Exception as e:
+            logger.warning(
+                f"⚠️ MongoDB unavailable — falling back to in-memory sessions. "
+                f"Data will NOT persist across restarts. Error: {e}"
+            )
+            return SessionManager()
     else:
         logger.info("Using in-memory session manager")
         return SessionManager()
 
 session_manager = _create_session_manager()
+

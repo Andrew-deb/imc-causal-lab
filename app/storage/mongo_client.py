@@ -14,10 +14,32 @@ logger = logging.getLogger(__name__)
 _client: MongoClient | None = None
 
 
+def _configure_dns():
+    """
+    Override dnspython's default resolver to use Google Public DNS.
+
+    On Windows, dnspython picks up DNS servers from ALL network adapters
+    (Ethernet, Wi-Fi, etc.) and may try unreachable ones first, causing
+    mongodb+srv:// SRV lookups to time out. Pinning to Google DNS
+    (8.8.8.8 / 8.8.4.4) ensures reliable resolution on any connection.
+    """
+    try:
+        import dns.resolver
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = ["8.8.8.8", "8.8.4.4"]
+        dns.resolver.default_resolver = resolver
+        logger.debug("DNS resolver configured to use Google Public DNS")
+    except ImportError:
+        # dnspython not installed — pymongo will fall back to system DNS
+        pass
+
+
 def get_client() -> MongoClient:
     """Get or create the MongoDB client (singleton)."""
     global _client
     if _client is None:
+        # Ensure DNS uses reliable nameservers before SRV lookup
+        _configure_dns()
         try:
             # Use shorter timeouts (3s selection, 3s connection, 10s socket) to fail fast on network drops
             # and retryReads/retryWrites for automatic recovery from transient glitches.
@@ -33,7 +55,12 @@ def get_client() -> MongoClient:
             _client.admin.command("ping")
             logger.info("✅ Connected to MongoDB Atlas")
         except Exception as e:
+            _client = None  # Reset so future calls can retry
             logger.error(f"❌ Failed to connect/ping MongoDB Atlas: {e}")
+            raise RuntimeError(
+                f"Could not connect to MongoDB. Check your MONGODB_URI, "
+                f"network/DNS settings, and Atlas IP whitelist. Error: {e}"
+            ) from e
     return _client
 
 

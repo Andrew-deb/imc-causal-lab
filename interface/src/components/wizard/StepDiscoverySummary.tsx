@@ -1,4 +1,9 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSession } from "@/contexts/SessionContext";
+import { usePipeline } from "@/contexts/PipelineContext";
+import { api } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,10 +12,43 @@ import { ROLE_COLORS } from "@/lib/causal-graph";
 import { useDAGLibrary } from "@/lib/dag-store";
 import DAGCanvas from "@/components/dag/DAGCanvas";
 import VariableRolesPanel from "@/components/dag/VariableRolesPanel";
+import { Loader2 } from "lucide-react";
 
-export default function StepDiscoverySummary({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
-  const { selectedDagId } = useSession();
+export default function StepDiscoverySummary({ onBack }: { onBack: () => void }) {
+  const { selectedDagId, sessionId } = useSession();
   const { dags, loading } = useDAGLibrary();
+  const { toast } = useToast();
+  const navigate = useNavigate();
+  const { startStreaming } = usePipeline();
+  const [running, setRunning] = useState(false);
+
+  const handleRun = async () => {
+    if (!sessionId) {
+      toast({ title: "No active session", description: "Create or select a session first.", variant: "destructive" });
+      return;
+    }
+
+    setRunning(true);
+    try {
+      // 1. Trigger async analysis
+      const res = await api.runAsyncAnalysis(sessionId);
+      
+      // 2. Start streaming the modeling job
+      startStreaming(res.modeling_job_id);
+      
+      toast({ title: "Analysis started", description: "Navigating to pipeline monitor..." });
+      
+      // 3. Navigate immediately to the Monitor page
+      navigate("/monitor");
+    } catch (err) {
+      setRunning(false);
+      toast({
+        title: "Failed to start analysis",
+        description: err instanceof Error ? err.message : "An unexpected error occurred.",
+        variant: "destructive"
+      });
+    }
+  };
 
   const dag = dags.find((d) => d.dag_id === selectedDagId);
 
@@ -32,8 +70,8 @@ export default function StepDiscoverySummary({ onNext, onBack }: { onNext: () =>
           </CardContent>
         </Card>
         <div className="flex justify-between">
-          <Button variant="outline" onClick={onBack}>Back</Button>
-          <Button onClick={onNext} disabled>Generate Causal Estimates</Button>
+          <Button variant="outline" onClick={onBack} disabled={running}>Back</Button>
+          <Button onClick={handleRun} disabled>Generate Causal Estimates</Button>
         </div>
       </div>
     );
@@ -142,8 +180,17 @@ export default function StepDiscoverySummary({ onNext, onBack }: { onNext: () =>
       />
 
       <div className="flex justify-between">
-        <Button variant="outline" onClick={onBack}>Back</Button>
-        <Button onClick={onNext}>Generate Causal Estimates</Button>
+        <Button variant="outline" onClick={onBack} disabled={running}>Back</Button>
+        <Button onClick={handleRun} disabled={running}>
+          {running ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Starting...
+            </>
+          ) : (
+            "Generate Causal Estimates"
+          )}
+        </Button>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { Fragment } from "react";
 export interface Crumb {
   label: string;
   to?: string;
+  link?: string;
   onClick?: () => void;
 }
 
@@ -16,6 +17,7 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
       </Link>
       {items.map((c, i) => {
         const isLast = i === items.length - 1;
+        const targetPath = c.to || c.link;
         return (
           <Fragment key={i}>
             <ChevronRight className="h-3 w-3 text-border" />
@@ -27,8 +29,8 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
               >
                 {c.label}
               </button>
-            ) : !isLast && c.to ? (
-              <Link to={c.to} className="hover:text-foreground transition-colors truncate max-w-[200px]">
+            ) : !isLast && targetPath ? (
+              <Link to={targetPath} className="hover:text-foreground transition-colors truncate max-w-[200px]">
                 {c.label}
               </Link>
             ) : (

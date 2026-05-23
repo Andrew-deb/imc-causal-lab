@@ -8,10 +8,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import { TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap, ShieldAlert, BarChart3, DollarSign, Percent } from "lucide-react";
+import {
+  TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap,
+  ShieldAlert, BarChart3, DollarSign, Percent, PlusCircle, History, ArrowRight, Workflow,
+  PlayCircle, LayoutDashboard, HelpCircle, Activity
+} from "lucide-react";
 import ModelEvaluation from "@/components/dashboard/ModelEvaluation";
 import { PageHeader } from "@/components/console/PageHeader";
 import { StatusPill } from "@/components/console/StatusPill";
@@ -376,7 +381,16 @@ function OverviewView({ selectedChannel, onChannelChange, cateVar, setCateVar, d
 }
 
 export default function Dashboard() {
-  const { sessionId } = useSession();
+  const { sessionId, setSessionId } = useSession();
+  const [searchParams] = useSearchParams();
+  const urlSessionId = searchParams.get("session_id");
+
+  useEffect(() => {
+    if (urlSessionId && urlSessionId !== sessionId) {
+      setSessionId(urlSessionId);
+    }
+  }, [urlSessionId, sessionId, setSessionId]);
+
   const [cateVar, setCateVar] = useState("age");
   const [selectedChannel, setSelectedChannel] = useState("");
 
@@ -431,12 +445,135 @@ export default function Dashboard() {
     );
   }
 
+  if (!sessionId) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title="Dashboard"
+          description="No active session loaded. Select or run an analysis to view results."
+          breadcrumbs={[{ label: "Causal Lab", to: "/" }, { label: "Dashboard" }]}
+          icon={<TrendingUp className="h-5 w-5" />}
+        />
+
+        <div className="flex flex-col items-center justify-center py-8 px-4 text-center max-w-4xl mx-auto space-y-8">
+          <div className="space-y-3">
+            <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto text-primary">
+              <LayoutDashboard className="h-8 w-8" />
+            </div>
+            <h2 className="text-xl font-bold tracking-tight text-foreground">Interactive Results Dashboard</h2>
+            <p className="text-sm text-muted-foreground max-w-lg leading-relaxed">
+              This dashboard provides visual insights into your marketing campaigns, showing model comparison metrics, causal lift percentages, and segmented customer response models.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+            <Card className="hover:border-primary/50 transition-all duration-300 hover:shadow-md group flex flex-col justify-between border border-border/80">
+              <CardHeader className="pb-2">
+                <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+                  <PlusCircle className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-sm font-semibold text-left">New Analysis Wizard</CardTitle>
+              </CardHeader>
+              <CardContent className="text-left space-y-4 flex-1 flex flex-col justify-between">
+                <p className="text-xs text-muted-foreground leading-normal">
+                  Upload campaign data, map columns, run causal discovery, and kick off the estimation pipeline.
+                </p>
+                <Button size="sm" asChild className="h-8 w-full mt-2">
+                  <Link to="/new-analysis" className="flex items-center justify-center gap-1">
+                    Start Wizard <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:border-primary/50 transition-all duration-300 hover:shadow-md group flex flex-col justify-between border border-border/80">
+              <CardHeader className="pb-2">
+                <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+                  <History className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-sm font-semibold text-left">Session History</CardTitle>
+              </CardHeader>
+              <CardContent className="text-left space-y-4 flex-1 flex flex-col justify-between">
+                <p className="text-xs text-muted-foreground leading-normal">
+                  Select and load a previously completed analysis session to view its models and results.
+                </p>
+                <Button variant="outline" size="sm" asChild className="h-8 w-full mt-2">
+                  <Link to="/sessions" className="flex items-center justify-center gap-1">
+                    Browse Sessions <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:border-primary/50 transition-all duration-300 hover:shadow-md group flex flex-col justify-between border border-border/80">
+              <CardHeader className="pb-2">
+                <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+                  <Activity className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-sm font-semibold text-left">Pipeline Monitor</CardTitle>
+              </CardHeader>
+              <CardContent className="text-left space-y-4 flex-1 flex flex-col justify-between">
+                <p className="text-xs text-muted-foreground leading-normal">
+                  Check progress on active estimation runs or track the sequence of queued pipelines.
+                </p>
+                <Button variant="outline" size="sm" asChild className="h-8 w-full mt-2">
+                  <Link to="/monitor" className="flex items-center justify-center gap-1">
+                    Check Status <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="w-full border border-border/80 bg-muted/20">
+            <CardHeader className="pb-2 text-left">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <HelpCircle className="h-4 w-4 text-primary" />
+                Understanding the Causal Lab Workflow
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 relative">
+                {/* Visual Connector Line (desktop only) */}
+                <div className="hidden md:block absolute top-4 left-6 right-6 h-[1px] bg-border z-0" />
+                
+                <div className="space-y-1 text-left relative z-10">
+                  <div className="h-6 w-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold font-mono">1</div>
+                  <h4 className="text-xs font-semibold mt-1">Data Ingestion</h4>
+                  <p className="text-[10px] text-muted-foreground">Upload and map your customer transactions and campaign exposures.</p>
+                </div>
+
+                <div className="space-y-1 text-left relative z-10">
+                  <div className="h-6 w-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold font-mono">2</div>
+                  <h4 className="text-xs font-semibold mt-1">Causal Discovery</h4>
+                  <p className="text-[10px] text-muted-foreground">Define variable roles and map relationships via DAG Studio.</p>
+                </div>
+
+                <div className="space-y-1 text-left relative z-10">
+                  <div className="h-6 w-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold font-mono">3</div>
+                  <h4 className="text-xs font-semibold mt-1">Causal Modeling</h4>
+                  <p className="text-[10px] text-muted-foreground">Run treatment estimations with Double Robust and Causal Forest models.</p>
+                </div>
+
+                <div className="space-y-1 text-left relative z-10">
+                  <div className="h-6 w-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold font-mono">4</div>
+                  <h4 className="text-xs font-semibold mt-1">Uplift & Evaluation</h4>
+                  <p className="text-[10px] text-muted-foreground">Evaluate targeting policies and optimize media spend allocations.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 animate-fade-in">
       <PageHeader
         title="Dashboard"
         description={sessionId ? `Viewing results for session ${sessionId}` : "Showing sample data — run an analysis to see real results."}
-        breadcrumbs={[{ label: "Dashboard" }]}
+        breadcrumbs={[{ label: "Causal Lab", to: "/" }, { label: "Dashboard" }]}
         icon={<TrendingUp className="h-5 w-5" />}
         meta={
           <>

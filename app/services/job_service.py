@@ -22,9 +22,9 @@ EVALUATION_STEPS = [
     "Merging datasets",
     "Balance + temporal alignment",
     "Descriptive statistics",
-    "Fitting estimators",
-    "Computing uplift metrics",
-    "Packaging evaluation results"
+    "Engineering features",
+    "Fitting models + computing metrics",
+    "Selecting best models + building summary"
 ]
 
 

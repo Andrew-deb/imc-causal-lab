@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import {
   Activity, RefreshCw, X, PlayCircle, Clock, Trash2, ExternalLink,
   ChevronRight, Terminal, AlertTriangle, AlertCircle, CheckCircle2,
-  HelpCircle, ShieldCheck, Loader2, History
+  HelpCircle, ShieldCheck, Loader2, History,
+  TreePine, Scale, GitFork, LineChart, Brain
 } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import {
@@ -25,27 +26,23 @@ interface PipelineFlowProps {
   status: string;
 }
 
-export function PipelineFlow({ steps, status }: PipelineFlowProps) {
-  const getStepIcon = (stepStatus: string, stepNumber: number) => {
-    switch (stepStatus) {
-      case "completed":
-        return <CheckCircle2 className="h-4 w-4 text-success shrink-0" />;
-      case "failed":
-        return <X className="h-4 w-4 text-danger shrink-0" />;
-      case "running":
-        return <Loader2 className="h-4 w-4 text-warning animate-spin shrink-0" />;
-      case "skipped":
-        return <HelpCircle className="h-4 w-4 text-muted-foreground shrink-0" />;
-      case "pending":
-      default:
-        return (
-          <span className="text-[10px] font-mono font-bold bg-muted text-muted-foreground w-4 h-4 rounded-full flex items-center justify-center shrink-0">
-            {stepNumber}
-          </span>
-        );
-    }
-  };
+// Estimator mappings for dynamic execution icon display
+const ESTIMATOR_MAP: Record<string, { label: string; icon: React.ComponentType<any> }> = {
+  causal_forest: { label: "Causal Forest", icon: TreePine },
+  dr_learner: { label: "DR-Learner", icon: Scale },
+  t_learner: { label: "T-Learner", icon: GitFork },
+  linear_regression: { label: "Linear Reg.", icon: LineChart },
+  logistic_regression: { label: "Logistic Reg.", icon: LineChart },
+};
 
+const formatChannelName = (name: string) => {
+  return name
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+};
+
+export function PipelineFlow({ steps, status }: PipelineFlowProps) {
   const formatMs = (ms?: number | null) => {
     if (ms === undefined || ms === null) return "";
     if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -59,6 +56,50 @@ export function PipelineFlow({ steps, status }: PipelineFlowProps) {
         const isRunning = step.status === "running";
         const isFailed = step.status === "failed";
         const isPending = step.status === "pending";
+
+        let displayDetail = step.detail;
+        let isFitting = false;
+        let ModelIcon = Brain;
+        let modelLabel = "";
+        let channelLabel = "";
+
+        if (isRunning && step.detail?.startsWith("fitting:")) {
+          const parts = step.detail.split(":");
+          if (parts.length >= 3) {
+            isFitting = true;
+            const modelKey = parts[1];
+            const channelKey = parts[2];
+            
+            const modelInfo = ESTIMATOR_MAP[modelKey] || { label: modelKey, icon: Brain };
+            ModelIcon = modelInfo.icon;
+            modelLabel = modelInfo.label;
+            channelLabel = formatChannelName(channelKey);
+            displayDetail = `${channelLabel} → ${modelLabel}`;
+          }
+        }
+
+        const getStepIcon = () => {
+          if (isRunning && isFitting) {
+            return <ModelIcon className="h-4 w-4 text-warning animate-pulse shrink-0" />;
+          }
+          switch (step.status) {
+            case "completed":
+              return <CheckCircle2 className="h-4 w-4 text-success shrink-0" />;
+            case "failed":
+              return <X className="h-4 w-4 text-danger shrink-0" />;
+            case "running":
+              return <Loader2 className="h-4 w-4 text-warning animate-spin shrink-0" />;
+            case "skipped":
+              return <HelpCircle className="h-4 w-4 text-muted-foreground shrink-0" />;
+            case "pending":
+            default:
+              return (
+                <span className="text-[10px] font-mono font-bold bg-muted text-muted-foreground w-4 h-4 rounded-full flex items-center justify-center shrink-0">
+                  {step.step_number}
+                </span>
+              );
+          }
+        };
 
         let cardBorderColor = "border-border";
         let cardBg = "bg-card";
@@ -88,7 +129,7 @@ export function PipelineFlow({ steps, status }: PipelineFlowProps) {
                 <span className={`text-[10px] font-semibold tracking-wide leading-tight truncate pr-1 ${isRunning ? "text-warning" : "text-foreground"}`}>
                   {step.name}
                 </span>
-                {getStepIcon(step.status, step.step_number)}
+                {getStepIcon()}
               </div>
 
               <div className="flex items-center justify-between text-[9px] text-muted-foreground font-mono mt-1 z-10">
@@ -108,12 +149,12 @@ export function PipelineFlow({ steps, status }: PipelineFlowProps) {
                 ) : (
                   <span />
                 )}
-                {step.detail && (
+                {displayDetail && (
                   <span 
-                    className="max-w-[100px] pr-1 truncate bg-muted/40 px-1 py-0.2 rounded font-sans" 
-                    title={step.detail}
+                    className="max-w-[140px] pr-1 truncate bg-muted/40 px-1 py-0.2 rounded font-sans" 
+                    title={displayDetail}
                   >
-                    {step.detail}
+                    {displayDetail}
                   </span>
                 )}
               </div>
@@ -297,7 +338,7 @@ export default function PipelineMonitor() {
       <PageHeader
         title="Pipeline Monitor"
         description="Real-time progress tracking, sequential queue status, and run execution history."
-        breadcrumbs={[{ label: "Causal Lab" }, { label: "Pipeline Monitor" }]}
+        breadcrumbs={[{ label: "Causal Lab", to: "/" }, { label: "Pipeline Monitor" }]}
         icon={<Activity className="h-5 w-5 text-primary" />}
         actions={
           <Button

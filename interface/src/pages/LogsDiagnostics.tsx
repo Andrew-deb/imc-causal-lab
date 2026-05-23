@@ -347,13 +347,12 @@ export default function LogsDiagnostics() {
   // Math helper
   function abs(x: number) { return Math.abs(x); }
   function max(a: number, b: number) { return Math.max(a, b); }
-
   return (
     <div className="container mx-auto p-4 max-w-6xl space-y-6">
       <PageHeader
         title="Logs & Diagnostics"
         description="System events execution logs, statistical sample balances, and cross-estimator health matrices."
-        breadcrumbs={[{ label: "Causal Lab" }, { label: "Logs & Diagnostics" }]}
+        breadcrumbs={[{ label: "Causal Lab", to: "/" }, { label: "Logs & Diagnostics" }]}
         icon={<ScrollText className="h-5 w-5 text-primary" />}
         actions={
           <div className="flex items-center gap-3">

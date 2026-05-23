@@ -153,7 +153,7 @@ export default function PipelineRunDetail() {
         <PageHeader
           title="Run Details"
           description="Pipeline run execution not found."
-          breadcrumbs={[{ label: "Causal Lab" }, { label: "Pipeline Monitor", link: "/monitor" }, { label: "Run details" }]}
+          breadcrumbs={[{ label: "Causal Lab", to: "/" }, { label: "Pipeline Monitor", to: "/monitor" }, { label: "Run details" }]}
           icon={<AlertCircle className="h-5 w-5 text-danger" />}
         />
         <Card className="border border-danger/20 bg-danger-soft/10 p-6 flex flex-col items-center text-center space-y-4">
@@ -199,7 +199,7 @@ export default function PipelineRunDetail() {
       <PageHeader
         title={`Pipeline Run Details`}
         description={`Detailed status, metrics, and sequential execution logs for pipeline run.`}
-        breadcrumbs={[{ label: "Causal Lab" }, { label: "Pipeline Monitor", link: "/monitor" }, { label: `Run: ${run.run_id.startsWith("run_") ? run.run_id.slice(4, 16) : run.run_id.slice(0, 12)}...` }]}
+        breadcrumbs={[{ label: "Causal Lab", to: "/" }, { label: "Pipeline Monitor", to: "/monitor" }, { label: `Run: ${run.run_id.startsWith("run_") ? run.run_id.slice(4, 16) : run.run_id.slice(0, 12)}...` }]}
         icon={<Activity className="h-5 w-5 text-primary" />}
       />
 

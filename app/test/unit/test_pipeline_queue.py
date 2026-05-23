@@ -91,7 +91,10 @@ async def test_cancel_queued_job(mock_job_manager, mock_event_manager):
         assert cancelled is True
         assert "job_2" not in queue._queued_jobs
         assert "job_2" in queue._cancelled_jobs
-        mock_job_manager.update_job.assert_any_call("job_2", status="cancelled", completed_at=ANY)
+        assert any(
+            call[0][0] == "job_2" and call[1].get("status") == "cancelled"
+            for call in mock_job_manager.update_job.call_args_list
+        )
 
         await queue.stop()
 
@@ -128,7 +131,10 @@ async def test_cancel_active_job(mock_job_manager, mock_event_manager):
         await asyncio.wait_for(finish_event.wait(), timeout=2.0)
 
         # Verify database update for job cancellation
-        mock_job_manager.update_job.assert_any_call("job_active", status="cancelled", completed_at=ANY)
+        assert any(
+            call[0][0] == "job_active" and call[1].get("status") == "cancelled"
+            for call in mock_job_manager.update_job.call_args_list
+        )
 
         await queue.stop()
 
@@ -165,11 +171,11 @@ async def test_cascading_failure(mock_job_manager, mock_event_manager):
 
         # Evaluation job in queue should be automatically cancelled due to cascading modeling failure
         assert "job_evaluation" not in queue._queued_jobs
-        mock_job_manager.update_job.assert_any_call(
-            "job_evaluation",
-            status="failed",
-            completed_at=ANY,
-            error="Cancelled due to failure of modeling job job_causal"
+        assert any(
+            call[0][0] == "job_evaluation" and
+            call[1].get("status") == "failed" and
+            call[1].get("error") == "Cancelled due to failure of modeling job job_causal"
+            for call in mock_job_manager.update_job.call_args_list
         )
 
         await queue.stop()
@@ -216,7 +222,7 @@ async def test_startup_cleans_up_completed_jobs(mock_job_manager, mock_event_man
             "evaluation_result": None
         }
     mock_session_manager.get_session.side_effect = get_session_side_effect
-
+    
     with patch("app.services.pipeline_queue.job_manager", mock_job_manager), \
          patch("app.services.pipeline_queue.event_manager", mock_event_manager), \
          patch("app.services.session_service.session_manager", mock_session_manager):
@@ -224,24 +230,34 @@ async def test_startup_cleans_up_completed_jobs(mock_job_manager, mock_event_man
         queue = PipelineQueue(max_queued=3)
         queue.start()
         
-        mock_job_manager.update_job.assert_any_call(
-            "job_causal",
-            status="completed",
-            completed_at=ANY,
-            steps=[{"step_number": 1, "name": "Step 1", "status": "completed", "duration_ms": 0}]
+        # Check job_causal update
+        assert any(
+            call[0][0] == "job_causal" and
+            call[1].get("status") == "completed" and
+            len(call[1].get("steps", [])) == 1 and
+            call[1]["steps"][0]["status"] == "completed"
+            for call in mock_job_manager.update_job.call_args_list
         )
-        mock_job_manager.update_job.assert_any_call(
-            "job_evaluation",
-            status="completed",
-            completed_at=ANY,
-            steps=[{"step_number": 1, "name": "Step 1", "status": "completed", "duration_ms": 0}]
+
+        # Check job_evaluation update
+        assert any(
+            call[0][0] == "job_evaluation" and
+            call[1].get("status") == "completed" and
+            len(call[1].get("steps", [])) == 1 and
+            call[1]["steps"][0]["status"] == "completed"
+            for call in mock_job_manager.update_job.call_args_list
         )
-        mock_job_manager.update_job.assert_any_call(
-            "job_interrupted",
-            status="interrupted",
-            completed_at=ANY,
-            error="Server restarted during execution."
+
+        # Check job_interrupted update
+        assert any(
+            call[0][0] == "job_interrupted" and
+            call[1].get("status") == "interrupted" and
+            call[1].get("error") == "Server restarted during execution." and
+            len(call[1].get("steps", [])) == 1 and
+            call[1]["steps"][0]["status"] == "interrupted"
+            for call in mock_job_manager.update_job.call_args_list
         )
         
         await queue.stop()
+
 

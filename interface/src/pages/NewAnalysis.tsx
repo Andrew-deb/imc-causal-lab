@@ -8,14 +8,12 @@ import StepDataCollection from "@/components/wizard/StepDataCollection";
 import StepImcMapping from "@/components/wizard/StepImcMapping";
 import StepCausalIdentification from "@/components/wizard/StepCausalIdentification";
 import StepDiscoverySummary from "@/components/wizard/StepDiscoverySummary";
-import StepModelExecution from "@/components/wizard/StepModelExecution";
 
 const STEPS = [
   "Data Collection",
   "IMC Categorization",
   "Causal Discovery",
   "Discovery Summary",
-  "Generate Results",
 ];
 
 export default function NewAnalysis() {
@@ -29,7 +27,7 @@ export default function NewAnalysis() {
     if (status === "mapped") return 2; // Go to Causal Identification
     if (status === "discovery_started") return 2; // In the middle of discovery
     if (status === "discovery_completed") return 3; // Go to Discovery Summary
-    if (status === "pipeline_running") return 4; // Go to Generate Results
+    if (status === "pipeline_running") return 3; // Go to Discovery Summary
     return 0; // Default to step 0
   };
 
@@ -97,8 +95,7 @@ export default function NewAnalysis() {
         {currentStep === 0 && <StepDataCollection onNext={goNext} />}
         {currentStep === 1 && <StepImcMapping onNext={goNext} onBack={goBack} />}
         {currentStep === 2 && <StepCausalIdentification onNext={goNext} onBack={goBack} />}
-        {currentStep === 3 && <StepDiscoverySummary onNext={goNext} onBack={goBack} />}
-        {currentStep === 4 && <StepModelExecution onComplete={onComplete} onBack={goBack} />}
+        {currentStep === 3 && <StepDiscoverySummary onBack={goBack} />}
       </div>
     </div>
   );

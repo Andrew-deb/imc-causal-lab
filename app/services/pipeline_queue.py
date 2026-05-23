@@ -55,21 +55,81 @@ class PipelineQueue:
                             if new_step.get("status") in ("pending", "running"):
                                 new_step["status"] = "completed"
                                 if new_step.get("duration_ms") is None:
-                                    new_step["duration_ms"] = 0
+                                    new_step["duration_ms"] = 0.0
                             updated_steps.append(new_step)
+
+                        started_at = job.get("started_at")
+                        duration_seconds = None
+                        if started_at:
+                            if isinstance(started_at, str):
+                                started_at = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                            if started_at.tzinfo is None:
+                                started_at = started_at.replace(tzinfo=timezone.utc)
+                            duration_seconds = (now - started_at).total_seconds()
 
                         job_manager.update_job(
                             job_id,
                             status="completed",
                             completed_at=now,
+                            duration_seconds=duration_seconds,
                             steps=updated_steps
                         )
                         completed_count += 1
                     else:
+                        # Reconcile interrupted steps
+                        started_at = job.get("started_at")
+                        updated_at = job.get("updated_at")
+                        duration_seconds = None
+                        
+                        steps = job.get("steps", [])
+                        updated_steps = []
+                        for s in steps:
+                            new_step = dict(s)
+                            if new_step.get("status") == "running":
+                                new_step["status"] = "interrupted"
+                                step_started_at = new_step.get("started_at")
+                                duration_ms = 0.0
+                                if step_started_at:
+                                    if isinstance(step_started_at, str):
+                                        step_started_at = datetime.fromisoformat(step_started_at.replace("Z", "+00:00"))
+                                    if step_started_at.tzinfo is None:
+                                        step_started_at = step_started_at.replace(tzinfo=timezone.utc)
+                                    
+                                    end_time = updated_at or now
+                                    if isinstance(end_time, str):
+                                        end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                                    if end_time.tzinfo is None:
+                                        end_time = end_time.replace(tzinfo=timezone.utc)
+                                    
+                                    duration_ms = (end_time - step_started_at).total_seconds() * 1000
+                                new_step["duration_ms"] = round(duration_ms, 2)
+                                new_step["error"] = "Server restarted during execution."
+                            elif new_step.get("status") == "pending":
+                                new_step["status"] = "interrupted"
+                                new_step["duration_ms"] = 0.0
+                                new_step["error"] = "Server restarted during execution."
+                            updated_steps.append(new_step)
+
+                        if started_at:
+                            if isinstance(started_at, str):
+                                started_at = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                            if started_at.tzinfo is None:
+                                started_at = started_at.replace(tzinfo=timezone.utc)
+                            
+                            end_time = updated_at or now
+                            if isinstance(end_time, str):
+                                end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                            if end_time.tzinfo is None:
+                                end_time = end_time.replace(tzinfo=timezone.utc)
+                            
+                            duration_seconds = max(0.0, (end_time - started_at).total_seconds())
+
                         job_manager.update_job(
                             job_id,
                             status="interrupted",
                             completed_at=now,
+                            duration_seconds=duration_seconds,
+                            steps=updated_steps,
                             error="Server restarted during execution."
                         )
                         event_manager.log(
@@ -77,7 +137,7 @@ class PipelineQueue:
                             severity="warning",
                             session_id=session_id,
                             message=f"Pipeline job {job_id[:8]} interrupted due to server restart",
-                            metadata={"job_id": job_id}
+                            metadata={"job_id": job_id, "duration_seconds": duration_seconds}
                         )
                         interrupted_count += 1
             if interrupted_count > 0 or completed_count > 0:
@@ -143,10 +203,22 @@ class PipelineQueue:
             self._cancelled_jobs.add(job_id)
             self._queued_jobs.remove(job_id)
             try:
+                job = job_manager.get_job(job_id)
+                steps = job.get("steps", []) if job else []
+                updated_steps = []
+                for s in steps:
+                    new_step = dict(s)
+                    if new_step.get("status") in ("pending", "running"):
+                        new_step["status"] = "cancelled"
+                        new_step["duration_ms"] = 0.0
+                    updated_steps.append(new_step)
+
                 job_manager.update_job(
                     job_id,
                     status="cancelled",
-                    completed_at=datetime.now(timezone.utc)
+                    completed_at=datetime.now(timezone.utc),
+                    duration_seconds=0.0,
+                    steps=updated_steps
                 )
                 event_manager.log(
                     event_type="job_cancelled",
@@ -191,17 +263,50 @@ class PipelineQueue:
             except asyncio.CancelledError:
                 logger.info(f"Running task for job {job_id[:8]} was cancelled.")
                 try:
+                    duration_seconds = None
+                    job = job_manager.get_job(job_id)
+                    now = datetime.now(timezone.utc)
+                    if job and job.get("started_at"):
+                        started_at = job["started_at"]
+                        if isinstance(started_at, str):
+                            started_at = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                        if started_at.tzinfo is None:
+                            started_at = started_at.replace(tzinfo=timezone.utc)
+                        duration_seconds = (now - started_at).total_seconds()
+
+                    steps = job.get("steps", []) if job else []
+                    updated_steps = []
+                    for s in steps:
+                        new_step = dict(s)
+                        if new_step.get("status") == "running":
+                            new_step["status"] = "cancelled"
+                            step_started_at = new_step.get("started_at")
+                            duration_ms = 0.0
+                            if step_started_at:
+                                if isinstance(step_started_at, str):
+                                    step_started_at = datetime.fromisoformat(step_started_at.replace("Z", "+00:00"))
+                                if step_started_at.tzinfo is None:
+                                    step_started_at = step_started_at.replace(tzinfo=timezone.utc)
+                                duration_ms = (now - step_started_at).total_seconds() * 1000
+                            new_step["duration_ms"] = round(duration_ms, 2)
+                        elif new_step.get("status") == "pending":
+                            new_step["status"] = "cancelled"
+                            new_step["duration_ms"] = 0.0
+                        updated_steps.append(new_step)
+
                     job_manager.update_job(
                         job_id,
                         status="cancelled",
-                        completed_at=datetime.now(timezone.utc)
+                        completed_at=now,
+                        duration_seconds=duration_seconds,
+                        steps=updated_steps
                     )
                     event_manager.log(
                         event_type="job_cancelled",
                         severity="info",
                         session_id=None,
                         message=f"Job {job_id[:8]} cancelled during execution",
-                        metadata={"job_id": job_id}
+                        metadata={"job_id": job_id, "duration_seconds": duration_seconds}
                     )
                 except Exception as e:
                     logger.error(f"Failed to update job cancellation in DB: {e}")
@@ -226,6 +331,7 @@ class PipelineQueue:
     def _handle_cascading_failure(self, session_id: str, failing_job_id: str):
         """Cancel any queued evaluation jobs for the same session due to modeling failure."""
         logger.info(f"Handling cascading failure for session {session_id[:8]} due to failure of {failing_job_id[:8]}")
+        now = datetime.now(timezone.utc)
         to_cancel = []
         for q_job_id in list(self._queued_jobs):
             try:
@@ -240,10 +346,22 @@ class PipelineQueue:
                 self._queued_jobs.remove(job_id)
             self._cancelled_jobs.add(job_id)
             try:
+                job = job_manager.get_job(job_id)
+                steps = job.get("steps", []) if job else []
+                updated_steps = []
+                for s in steps:
+                    new_step = dict(s)
+                    if new_step.get("status") in ("pending", "running"):
+                        new_step["status"] = "cancelled"
+                        new_step["duration_ms"] = 0.0
+                    updated_steps.append(new_step)
+
                 job_manager.update_job(
                     job_id,
                     status="failed",
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=now,
+                    duration_seconds=0.0,
+                    steps=updated_steps,
                     error=f"Cancelled due to failure of modeling job {failing_job_id}"
                 )
                 event_manager.log(

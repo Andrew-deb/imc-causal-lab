@@ -341,99 +341,101 @@ def run_pipeline(
             n_total = len(channel_data) * len(estimators)
             s.detail(f"{n_total} model fits")
 
-        def _run_channel(channel_name: str, X, T, Y):
-            """Run all estimators for a single channel."""
-            model_results: dict[str, ModelResult] = {}
+            def _run_channel(channel_name: str, X, T, Y):
+                """Run all estimators for a single channel."""
+                model_results: dict[str, ModelResult] = {}
 
-            for estimator in estimators:
-                fallback = ModelResult(model_name=estimator.name, ate=0.0, att=0.0)
-                result = safe_run(
-                    estimator.run, X, T, Y, feature_names=confounder_cols,
-                    fallback=fallback,
-                    error_msg=f"{channel_name}/{estimator.name}",
+                for estimator in estimators:
+                    s.detail(f"fitting:{estimator.name}:{channel_name}")
+                    fallback = ModelResult(model_name=estimator.name, ate=0.0, att=0.0)
+                    result = safe_run(
+                        estimator.run, X, T, Y, feature_names=confounder_cols,
+                        fallback=fallback,
+                        error_msg=f"{channel_name}/{estimator.name}",
+                    )
+
+                    # Populate CATE by segment for the best causal model
+                    if result.ate != 0.0 and estimator.name == "causal_forest" and result.ite_array:
+                        full_ite = np.array(result.ite_array)
+                        result.cate_by_segment = _compute_cate_by_segment(
+                            full_ite, aligned.head(len(full_ite)), segment_cols
+                        )
+
+                    model_results[estimator.name] = result
+                    pbar.set_postfix_str(f"{channel_name} -> {estimator.name} [OK] ATE={result.ate:.2f}")
+                    pbar.update(1)
+
+                # Compute mean outcome for control group (baseline spending)
+                # Used by frontend to compute % lift = ATE / mean_Y_control × 100
+                control_mask = T == 0
+                mean_y_control = float(np.mean(Y[control_mask])) if np.sum(control_mask) > 0 else float(np.mean(Y))
+
+                # ── Inline evaluation: compute metrics for each model ──
+                model_evals: dict[str, ModelEvaluationResult] = {}
+                for est_name, result in model_results.items():
+                    ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
+                    if len(ite) < len(T):
+                        full_ite = np.full(len(T), np.mean(ite) if len(ite) > 0 else 0.0)
+                        full_ite[:len(ite)] = ite
+                        ite = full_ite
+                    try:
+                        metrics = compute_all_metrics(ite, T, Y, propensity_scores=None, k=0.10)
+                        model_evals[est_name] = ModelEvaluationResult(
+                            model_name=est_name, metrics=EvaluationMetrics(**metrics)
+                        )
+                    except Exception:
+                        pass  # Skip models that fail metric computation
+
+                # Select best model by evaluation metrics (Uplift AUC + Qini tiebreaker)
+                eval_best = select_best_model(model_evals) if model_evals else None
+                eval_best_uplift_auc = None
+                eval_best_qini_auc = None
+                if eval_best and eval_best in model_evals:
+                    eval_best_uplift_auc = model_evals[eval_best].metrics.uplift_auc
+                    eval_best_qini_auc = model_evals[eval_best].metrics.qini_auc
+
+                # Build channel-level aggregation (evaluation-driven model selection)
+                balance_status = balance_lookup.get(channel_name, "good")
+                channel_result = _build_channel_result(
+                    channel_name, model_results, balance_status,
+                    eval_best_model=eval_best,
+                    eval_best_uplift_auc=eval_best_uplift_auc,
+                    eval_best_qini_auc=eval_best_qini_auc,
                 )
+                channel_result.mean_outcome_control = round(mean_y_control, 4)
 
-                # Populate CATE by segment for the best causal model
-                if result.ate != 0.0 and estimator.name == "causal_forest" and result.ite_array:
-                    full_ite = np.array(result.ite_array)
-                    result.cate_by_segment = _compute_cate_by_segment(
-                        full_ite, aligned.head(len(full_ite)), segment_cols
-                    )
+                cross = _build_cross_model_comparison(model_results)
 
-                model_results[estimator.name] = result
-                pbar.set_postfix_str(f"{channel_name} -> {estimator.name} [OK] ATE={result.ate:.2f}")
-                pbar.update(1)
+                persuadables_pct = 0.0
+                best_result = model_results.get(channel_result.best_model)
+                if best_result and best_result.uplift_segments:
+                    persuadables_pct = best_result.uplift_segments.persuadables
 
-            # Compute mean outcome for control group (baseline spending)
-            # Used by frontend to compute % lift = ATE / mean_Y_control × 100
-            control_mask = T == 0
-            mean_y_control = float(np.mean(Y[control_mask])) if np.sum(control_mask) > 0 else float(np.mean(Y))
+                summary = ChannelSummary(
+                    channel=channel_name,
+                    consensus_ate=channel_result.consensus_ate,
+                    best_model=channel_result.best_model,
+                    agreement_score=channel_result.agreement_score,
+                    persuadables_pct=round(persuadables_pct, 4),
+                    confidence_level=channel_result.confidence_level,
+                )
+                return channel_name, channel_result, cross, summary
 
-            # ── Inline evaluation: compute metrics for each model ──
-            model_evals: dict[str, ModelEvaluationResult] = {}
-            for est_name, result in model_results.items():
-                ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
-                if len(ite) < len(T):
-                    full_ite = np.full(len(T), np.mean(ite) if len(ite) > 0 else 0.0)
-                    full_ite[:len(ite)] = ite
-                    ite = full_ite
+            channel_results: dict[str, ChannelResult] = {}
+            cross_model_comparisons: dict[str, CrossModelComparison] = {}
+            channel_summaries: list[ChannelSummary] = []
+
+            pbar = tracker.model_loop(total=n_total)
+            for ch, (X, T, Y) in channel_data.items():
                 try:
-                    metrics = compute_all_metrics(ite, T, Y, propensity_scores=None, k=0.10)
-                    model_evals[est_name] = ModelEvaluationResult(
-                        model_name=est_name, metrics=EvaluationMetrics(**metrics)
-                    )
-                except Exception:
-                    pass  # Skip models that fail metric computation
-
-            # Select best model by evaluation metrics (Uplift AUC + Qini tiebreaker)
-            eval_best = select_best_model(model_evals) if model_evals else None
-            eval_best_uplift_auc = None
-            eval_best_qini_auc = None
-            if eval_best and eval_best in model_evals:
-                eval_best_uplift_auc = model_evals[eval_best].metrics.uplift_auc
-                eval_best_qini_auc = model_evals[eval_best].metrics.qini_auc
-
-            # Build channel-level aggregation (evaluation-driven model selection)
-            balance_status = balance_lookup.get(channel_name, "good")
-            channel_result = _build_channel_result(
-                channel_name, model_results, balance_status,
-                eval_best_model=eval_best,
-                eval_best_uplift_auc=eval_best_uplift_auc,
-                eval_best_qini_auc=eval_best_qini_auc,
-            )
-            channel_result.mean_outcome_control = round(mean_y_control, 4)
-
-            cross = _build_cross_model_comparison(model_results)
-
-            persuadables_pct = 0.0
-            best_result = model_results.get(channel_result.best_model)
-            if best_result and best_result.uplift_segments:
-                persuadables_pct = best_result.uplift_segments.persuadables
-
-            summary = ChannelSummary(
-                channel=channel_name,
-                consensus_ate=channel_result.consensus_ate,
-                best_model=channel_result.best_model,
-                agreement_score=channel_result.agreement_score,
-                persuadables_pct=round(persuadables_pct, 4),
-                confidence_level=channel_result.confidence_level,
-            )
-            return channel_name, channel_result, cross, summary
-
-        channel_results: dict[str, ChannelResult] = {}
-        cross_model_comparisons: dict[str, CrossModelComparison] = {}
-        channel_summaries: list[ChannelSummary] = []
-
-        pbar = tracker.model_loop(total=n_total)
-        for ch, (X, T, Y) in channel_data.items():
-            try:
-                name, ch_result, cross, summary = _run_channel(ch, X, T, Y)
-                channel_results[name] = ch_result
-                cross_model_comparisons[name] = cross
-                channel_summaries.append(summary)
-            except Exception as e:
-                logger.error(f"Channel '{ch}' failed entirely: {e}")
-        pbar.close()
+                    name, ch_result, cross, summary = _run_channel(ch, X, T, Y)
+                    channel_results[name] = ch_result
+                    cross_model_comparisons[name] = cross
+                    channel_summaries.append(summary)
+                except Exception as e:
+                    logger.error(f"Channel '{ch}' failed entirely: {e}")
+            pbar.close()
+            s.detail(f"{n_total} model fits")
 
         # ── Step 6: Build channel ranking ──────────────────────────
         with tracker.step(6, "Ranking channels"):
@@ -544,55 +546,57 @@ def run_evaluation(
             n_total = len(channel_data) * len(estimators)
             s.detail(f"{n_total} evaluations")
 
-        channel_evals = {}
-        best_model_per_channel = {}
-        # Collect model results per channel for associative vs causal comparison
-        channel_model_results: dict[str, dict[str, ModelResult]] = {}
-        pbar = tracker.model_loop(total=n_total, colour="magenta")
+            channel_evals = {}
+            best_model_per_channel = {}
+            # Collect model results per channel for associative vs causal comparison
+            channel_model_results: dict[str, dict[str, ModelResult]] = {}
+            pbar = tracker.model_loop(total=n_total, colour="magenta")
 
-        for ch, (X, T, Y) in channel_data.items():
-            model_evals = {}
-            model_results_for_ch: dict[str, ModelResult] = {}
+            for ch, (X, T, Y) in channel_data.items():
+                model_evals = {}
+                model_results_for_ch: dict[str, ModelResult] = {}
 
-            for estimator in estimators:
-                fallback_result = ModelResult(model_name=estimator.name, ate=0.0, att=0.0)
-                result = safe_run(
-                    estimator.run, X, T, Y, feature_names=confounder_cols,
-                    fallback=fallback_result,
-                    error_msg=f"{ch}/{estimator.name}",
+                for estimator in estimators:
+                    s.detail(f"fitting:{estimator.name}:{ch}")
+                    fallback_result = ModelResult(model_name=estimator.name, ate=0.0, att=0.0)
+                    result = safe_run(
+                        estimator.run, X, T, Y, feature_names=confounder_cols,
+                        fallback=fallback_result,
+                        error_msg=f"{ch}/{estimator.name}",
+                    )
+
+                    # Store the model result for associative vs causal comparison
+                    model_results_for_ch[estimator.name] = result
+
+                    ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
+                    if len(ite) < len(T):
+                        full_ite = np.full(len(T), np.mean(ite))
+                        full_ite[:len(ite)] = ite
+                        ite = full_ite
+
+                    propensity = None
+                    if estimator.name in ("dr_learner", "causal_forest"):
+                        propensity = getattr(estimator, "_last_propensity", None)
+
+                    metrics = compute_all_metrics(ite, T, Y, propensity, k=0.10)
+                    model_evals[estimator.name] = ModelEvaluationResult(
+                        model_name=estimator.name,
+                        metrics=EvaluationMetrics(**metrics),
+                    )
+                    pbar.set_postfix_str(f"{ch} -> {estimator.name} [OK]")
+                    pbar.update(1)
+
+                channel_evals[ch] = ChannelEvaluationResult(
+                    channel_name=ch,
+                    model_evaluations=model_evals,
                 )
+                channel_model_results[ch] = model_results_for_ch
 
-                # Store the model result for associative vs causal comparison
-                model_results_for_ch[estimator.name] = result
+                # Select best targeting model for this channel (by Uplift AUC)
+                best_model_per_channel[ch] = select_best_model(model_evals)
 
-                ite = np.array(result.ite_array) if result.ite_array else np.zeros(len(T))
-                if len(ite) < len(T):
-                    full_ite = np.full(len(T), np.mean(ite))
-                    full_ite[:len(ite)] = ite
-                    ite = full_ite
-
-                propensity = None
-                if estimator.name in ("dr_learner", "causal_forest"):
-                    propensity = getattr(estimator, "_last_propensity", None)
-
-                metrics = compute_all_metrics(ite, T, Y, propensity, k=0.10)
-                model_evals[estimator.name] = ModelEvaluationResult(
-                    model_name=estimator.name,
-                    metrics=EvaluationMetrics(**metrics),
-                )
-                pbar.set_postfix_str(f"{ch} -> {estimator.name} [OK]")
-                pbar.update(1)
-
-            channel_evals[ch] = ChannelEvaluationResult(
-                channel_name=ch,
-                model_evaluations=model_evals,
-            )
-            channel_model_results[ch] = model_results_for_ch
-
-            # Select best targeting model for this channel (by Uplift AUC)
-            best_model_per_channel[ch] = select_best_model(model_evals)
-
-        pbar.close()
+            pbar.close()
+            s.detail(f"{n_total} evaluations")
 
         # ── Step 6: Best model selection + summary + associative vs causal
         with tracker.step(6, "Selecting best models + building summary") as s:

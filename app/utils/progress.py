@@ -56,6 +56,15 @@ class StepContext:
     def detail(self, text: str):
         """Set detail text shown after the checkmark."""
         self._detail_text = text
+        if self._job_id:
+            try:
+                job_manager.update_step(
+                    self._job_id,
+                    self._step_num,
+                    detail=text
+                )
+            except Exception as e:
+                logger.error(f"Failed to update step detail in DB: {e}")
 
     def __enter__(self):
         self._start_time = time.time()
@@ -64,6 +73,7 @@ class StepContext:
                 job_manager.update_step(
                     self._job_id,
                     self._step_num,
+                    name=self._desc,
                     status="running",
                     started_at=datetime.now(timezone.utc)
                 )
@@ -182,10 +192,22 @@ class PipelineTracker:
 
             if self.job_id:
                 try:
+                    duration_seconds = None
+                    job = job_manager.get_job(self.job_id)
+                    if job and job.get("started_at"):
+                        started_at = job["started_at"]
+                        if isinstance(started_at, str):
+                            started_at = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                        if started_at.tzinfo is None:
+                            started_at = started_at.replace(tzinfo=timezone.utc)
+                        now = datetime.now(timezone.utc)
+                        duration_seconds = (now - started_at).total_seconds()
+
                     job_manager.update_job(
                         self.job_id,
                         status="failed",
                         completed_at=datetime.now(timezone.utc),
+                        duration_seconds=duration_seconds,
                         error=str(exc_val)
                     )
                     event_manager.log(
@@ -193,7 +215,7 @@ class PipelineTracker:
                         severity="error",
                         session_id=self.session_id,
                         message=f"Pipeline failed: {self.name} - {exc_val}",
-                        metadata={"job_id": self.job_id, "error": str(exc_val)}
+                        metadata={"job_id": self.job_id, "error": str(exc_val), "duration_seconds": duration_seconds}
                     )
                 except Exception as e:
                     logger.error(f"Failed to update job failure in DB: {e}")
