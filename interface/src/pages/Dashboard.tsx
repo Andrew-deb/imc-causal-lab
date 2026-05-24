@@ -15,7 +15,7 @@ import {
 import {
   TrendingUp, Users, Layers, Target, Crosshair, Check, XCircle, MoonStar, AlertTriangle, Zap,
   ShieldAlert, BarChart3, DollarSign, Percent, PlusCircle, History, ArrowRight, Workflow,
-  PlayCircle, LayoutDashboard, HelpCircle, Activity
+  PlayCircle, LayoutDashboard, HelpCircle, Activity, AlertCircle
 } from "lucide-react";
 import ModelEvaluation from "@/components/dashboard/ModelEvaluation";
 import { PageHeader } from "@/components/console/PageHeader";
@@ -394,10 +394,11 @@ export default function Dashboard() {
   const [cateVar, setCateVar] = useState("age");
   const [selectedChannel, setSelectedChannel] = useState("");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["session-results", sessionId],
     queryFn: () => (sessionId ? api.getSessionResults(sessionId) : Promise.reject("No session ID")),
     enabled: !!sessionId,
+    retry: false,
   });
 
   const { data: balance } = useQuery({
@@ -441,6 +442,33 @@ export default function Dashboard() {
           <Skeleton className="h-80 rounded-md" />
           <Skeleton className="h-80 rounded-md" />
         </div>
+      </div>
+    );
+  }
+
+  if (!isLoading && sessionId && (!data || error)) {
+    return (
+      <div className="container mx-auto p-4 max-w-4xl space-y-6">
+        <PageHeader
+          title="Dashboard"
+          description="Error loading session results."
+          breadcrumbs={[{ label: "Causal Lab", to: "/" }, { label: "Dashboard" }]}
+          icon={<TrendingUp className="h-5 w-5 text-danger" />}
+        />
+        <Card className="border border-danger/20 bg-danger-soft/10 p-6 flex flex-col items-center text-center space-y-4">
+          <AlertCircle className="h-12 w-12 text-danger" />
+          <div className="space-y-1">
+            <h4 className="font-semibold text-base text-foreground">No Results Available</h4>
+            <p className="text-xs text-muted-foreground max-w-sm">
+              Causal modeling results are not available for session "{sessionId}". The pipeline may have failed, been interrupted, or not run yet.
+            </p>
+          </div>
+          <Button size="sm" asChild>
+            <Link to="/monitor">
+              Go to Pipeline Monitor
+            </Link>
+          </Button>
+        </Card>
       </div>
     );
   }

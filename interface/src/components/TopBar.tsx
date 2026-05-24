@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,7 @@ export function TopBar() {
 
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="sm" className="hidden sm:inline-flex h-7 gap-1.5 text-xs text-muted-foreground" asChild>
-          <a href="https://docs.lovable.dev" target="_blank" rel="noreferrer">
+          <a href="/docs" target="_blank" rel="noopener noreferrer">
             <BookOpen className="h-3.5 w-3.5" /> Docs
           </a>
         </Button>

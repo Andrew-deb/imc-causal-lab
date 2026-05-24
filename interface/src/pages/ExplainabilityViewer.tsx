@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,21 +36,34 @@ type View =
 
 export default function ExplainabilityViewer() {
   const { dags, loading, save, remove } = useDAGLibrary();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlDagId = searchParams.get("dag_id");
   const [view, setView] = useState<View>({ kind: "library" });
   const [createOpen, setCreateOpen] = useState(false);
+
+  useEffect(() => {
+    if (urlDagId && dags.length > 0) {
+      const found = dags.find((d) => d.dag_id === urlDagId);
+      if (found) {
+        setView({ kind: "detail", id: urlDagId });
+      }
+    } else if (!urlDagId) {
+      setView({ kind: "library" });
+    }
+  }, [urlDagId, dags]);
 
   const fmt = (d: string) => { try { return format(parseISO(d), "MMM d, yyyy"); } catch { return d; } };
 
   if (view.kind === "ai") {
-    return <Wrapper title="Generate DAG with AI"><AIBuilder saveDag={save} onSaved={() => setView({ kind: "library" })} onCancel={() => setView({ kind: "library" })} /></Wrapper>;
+    return <Wrapper title="Generate DAG with AI"><AIBuilder saveDag={save} onSaved={() => { setView({ kind: "library" }); setSearchParams({}); }} onCancel={() => { setView({ kind: "library" }); setSearchParams({}); }} /></Wrapper>;
   }
   if (view.kind === "manual") {
-    return <Wrapper title="Build DAG Manually"><ManualBuilder saveDag={save} onSaved={(d) => setView({ kind: "detail", id: d.dag_id })} onCancel={() => setView({ kind: "library" })} /></Wrapper>;
+    return <Wrapper title="Build DAG Manually"><ManualBuilder saveDag={save} onSaved={(d) => { setView({ kind: "detail", id: d.dag_id }); setSearchParams({ dag_id: d.dag_id }); }} onCancel={() => { setView({ kind: "library" }); setSearchParams({}); }} /></Wrapper>;
   }
   if (view.kind === "detail") {
     const dag = dags.find((d) => d.dag_id === view.id);
-    if (!dag) return <Wrapper title="DAG not found"><Button variant="ghost" onClick={() => setView({ kind: "library" })}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button></Wrapper>;
-    return <DAGDetail dag={dag} onBack={() => setView({ kind: "library" })} onSave={save} onDelete={(id) => { remove(id); setView({ kind: "library" }); }} />;
+    if (!dag) return <Wrapper title="DAG not found"><Button variant="ghost" onClick={() => { setView({ kind: "library" }); setSearchParams({}); }}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button></Wrapper>;
+    return <DAGDetail dag={dag} onBack={() => { setView({ kind: "library" }); setSearchParams({}); }} onSave={save} onDelete={(id) => { remove(id); setView({ kind: "library" }); setSearchParams({}); }} />;
   }
 
   return (

@@ -59,6 +59,11 @@ export default function LogsDiagnostics() {
   const [historySearchQuery, setHistorySearchQuery] = useState<string>("");
   const [activeHistoryRunId, setActiveHistoryRunId] = useState<string | null>(null);
   const [healthSelectedChannel, setHealthSelectedChannel] = useState<string>("");
+  const [timeTicker, setTimeTicker] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setTimeTicker(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // --- Queries ---
   const { data: sessions = [], isLoading: isLoadingSessions } = useQuery<SessionSummary[]>({
@@ -180,26 +185,53 @@ export default function LogsDiagnostics() {
       const sortedJobs = [...runJobs].sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
       const latestJob = sortedJobs[sortedJobs.length - 1];
 
-      let overallStatus = latestJob.status;
+      let overallStatus = "completed";
       const hasRunning = runJobs.some(j => j.status === "running");
       const hasQueued = runJobs.some(j => j.status === "queued");
-      const hasCompleted = runJobs.some(j => j.status === "completed");
+      const hasFailed = runJobs.some(j => j.status === "failed");
+      const hasInterrupted = runJobs.some(j => j.status === "interrupted");
+      const hasCancelled = runJobs.some(j => j.status === "cancelled");
+      const allCompleted = runJobs.every(j => j.status === "completed");
 
       if (hasRunning) {
         overallStatus = "running";
       } else if (hasQueued) {
         overallStatus = "queued";
-      } else if (hasCompleted) {
+      } else if (hasFailed) {
+        overallStatus = "failed";
+      } else if (hasInterrupted) {
+        overallStatus = "interrupted";
+      } else if (hasCancelled) {
+        overallStatus = "cancelled";
+      } else if (allCompleted) {
         overallStatus = "completed";
+      } else {
+        overallStatus = latestJob.status;
       }
 
-      const totalDuration = runJobs.reduce((acc, j) => acc + (j.duration_seconds || 0), 0);
+      const totalDuration = runJobs.reduce((acc, j) => {
+        if (j.status === "running" && j.started_at) {
+          const elapsed = (Date.now() - new Date(j.started_at).getTime()) / 1000;
+          return acc + Math.max(0, elapsed);
+        }
+        return acc + (j.duration_seconds || 0);
+      }, 0);
+
+      let lastActive = latestJob.submitted_at;
+      if (overallStatus === "running") {
+        lastActive = new Date().toISOString();
+      } else {
+        const times = runJobs.map(j => j.updated_at || j.completed_at || j.started_at || j.submitted_at).filter(Boolean) as string[];
+        if (times.length > 0) {
+          lastActive = times.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+        }
+      }
 
       return {
         run_id: runId,
         session_id: earliestJob.session_id,
         created_at: earliestJob.submitted_at,
-        last_active: latestJob.submitted_at,
+        last_active: lastActive,
         jobs: sortedJobs,
         status: overallStatus,
         total_duration: totalDuration,
@@ -221,9 +253,15 @@ export default function LogsDiagnostics() {
     if (sec === undefined || sec === null) return "—";
     if (sec < 1) return "< 1s";
     if (sec < 60) return `${sec.toFixed(1)}s`;
-    const mins = Math.floor(sec / 60);
+    if (sec < 3600) {
+      const mins = Math.floor(sec / 60);
+      const secs = Math.round(sec % 60);
+      return `${mins}m ${secs}s`;
+    }
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
     const secs = Math.round(sec % 60);
-    return `${mins}m ${secs}s`;
+    return `${hrs}h ${mins}m ${secs}s`;
   };
 
   const formatMs = (ms?: number | null) => {
@@ -567,7 +605,7 @@ export default function LogsDiagnostics() {
                                     <span className="font-mono text-[10px] text-muted-foreground">({job.job_id.slice(0, 8)})</span>
                                   </h4>
                                   <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                                    <span>Duration: {formatDuration(job.duration_seconds)}</span>
+                                    <span>Duration: {formatDuration(job.status === "running" && job.started_at ? (Date.now() - new Date(job.started_at).getTime()) / 1000 : job.duration_seconds)}</span>
                                     <StatusPill tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : job.status === "queued" ? "info" : "default"}>
                                       {job.status}
                                     </StatusPill>

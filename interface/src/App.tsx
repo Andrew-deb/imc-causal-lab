@@ -16,6 +16,7 @@ import PipelineMonitor from "@/pages/PipelineMonitor";
 import PipelineRunDetail from "@/pages/PipelineRunDetail";
 import LogsDiagnostics from "@/pages/LogsDiagnostics";
 import About from "@/pages/About";
+import Docs from "@/pages/Docs";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -40,6 +41,7 @@ const App = () => (
                   <Route path="/monitor" element={<PipelineMonitor />} />
                   <Route path="/monitor/:runId" element={<PipelineRunDetail />} />
                   <Route path="/logs" element={<LogsDiagnostics />} />
+                  <Route path="/docs" element={<Docs />} />
                   <Route path="/about" element={<About />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>

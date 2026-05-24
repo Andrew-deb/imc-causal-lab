@@ -25,6 +25,12 @@ export default function PipelineRunDetail() {
   const [sessionsList, setSessionsList] = useState<SessionSummary[]>([]);
   const [fetchingSessions, setFetchingSessions] = useState(false);
 
+  const [timeTicker, setTimeTicker] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setTimeTicker(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const fetchSessions = async () => {
     setFetchingSessions(true);
     try {
@@ -75,9 +81,15 @@ export default function PipelineRunDetail() {
     if (sec === undefined || sec === null) return "—";
     if (sec < 1) return "< 1s";
     if (sec < 60) return `${sec.toFixed(1)}s`;
-    const mins = Math.floor(sec / 60);
+    if (sec < 3600) {
+      const mins = Math.floor(sec / 60);
+      const secs = Math.round(sec % 60);
+      return `${mins}m ${secs}s`;
+    }
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
     const secs = Math.round(sec % 60);
-    return `${mins}m ${secs}s`;
+    return `${hrs}h ${mins}m ${secs}s`;
   };
 
   const formatRows = (num?: number) => {
@@ -105,26 +117,53 @@ export default function PipelineRunDetail() {
       const sortedJobs = [...runJobs].sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
       const latestJob = sortedJobs[sortedJobs.length - 1];
 
-      let overallStatus = latestJob.status;
+      let overallStatus = "completed";
       const hasRunning = runJobs.some(j => j.status === "running");
       const hasQueued = runJobs.some(j => j.status === "queued");
-      const hasCompleted = runJobs.some(j => j.status === "completed");
+      const hasFailed = runJobs.some(j => j.status === "failed");
+      const hasInterrupted = runJobs.some(j => j.status === "interrupted");
+      const hasCancelled = runJobs.some(j => j.status === "cancelled");
+      const allCompleted = runJobs.every(j => j.status === "completed");
 
       if (hasRunning) {
         overallStatus = "running";
       } else if (hasQueued) {
         overallStatus = "queued";
-      } else if (hasCompleted) {
+      } else if (hasFailed) {
+        overallStatus = "failed";
+      } else if (hasInterrupted) {
+        overallStatus = "interrupted";
+      } else if (hasCancelled) {
+        overallStatus = "cancelled";
+      } else if (allCompleted) {
         overallStatus = "completed";
+      } else {
+        overallStatus = latestJob.status;
       }
 
-      const totalDuration = runJobs.reduce((acc, j) => acc + (j.duration_seconds || 0), 0);
+      const totalDuration = runJobs.reduce((acc, j) => {
+        if (j.status === "running" && j.started_at) {
+          const elapsed = (Date.now() - new Date(j.started_at).getTime()) / 1000;
+          return acc + Math.max(0, elapsed);
+        }
+        return acc + (j.duration_seconds || 0);
+      }, 0);
+
+      let lastActive = latestJob.submitted_at;
+      if (overallStatus === "running") {
+        lastActive = new Date().toISOString();
+      } else {
+        const times = runJobs.map(j => j.updated_at || j.completed_at || j.started_at || j.submitted_at).filter(Boolean) as string[];
+        if (times.length > 0) {
+          lastActive = times.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+        }
+      }
 
       return {
         run_id: id,
         session_id: sessionId,
         created_at: earliestJob.submitted_at,
-        last_active: latestJob.submitted_at,
+        last_active: lastActive,
         jobs: sortedJobs,
         status: overallStatus,
         dataset_meta: sessionSummary?.dataset_meta || earliestJob.config?.dataset_meta || null,
@@ -241,7 +280,9 @@ export default function PipelineRunDetail() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground font-sans">Last Active:</span>
-                  <span className="text-foreground font-bold">{relTime(run.last_active)}</span>
+                  <span className="text-foreground font-bold">
+                    {run.status === "running" ? "active now" : relTime(run.last_active)}
+                  </span>
                 </div>
               </div>
             </CardContent>
@@ -320,7 +361,7 @@ export default function PipelineRunDetail() {
                     <div className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
                       <span>Submitted: {new Date(job.submitted_at).toLocaleTimeString()}</span>
                       <span>•</span>
-                      <span>Duration: {formatDuration(job.duration_seconds)}</span>
+                      <span>Duration: {formatDuration(job.status === "running" && job.started_at ? (Date.now() - new Date(job.started_at).getTime()) / 1000 : job.duration_seconds)}</span>
                       <StatusPill tone={getStatusTone(job.status)}>{job.status}</StatusPill>
                     </div>
                   </div>

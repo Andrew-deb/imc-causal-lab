@@ -47,46 +47,48 @@ export default function NewAnalysis() {
         meta={<span>Step <span className="text-foreground font-medium">{currentStep + 1}</span> of {STEPS.length} · {STEPS[currentStep]}</span>}
       />
 
-      {/* Step Indicator — dense console pill row */}
-      <div className="panel p-3">
-        <div className="flex items-center gap-1 overflow-x-auto">
-          {STEPS.map((label, i) => {
-            const isDone = i < currentStep;
-            const isActive = i === currentStep;
-            return (
-              <div key={label} className="flex items-center flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => isDone && setCurrentStep(i)}
-                  className={cn(
-                    "flex items-center gap-2 h-7 rounded px-2.5 text-[12px] transition-colors",
-                    isActive
-                      ? "bg-primary text-primary-foreground font-medium"
-                      : isDone
-                      ? "text-foreground hover:bg-muted cursor-pointer"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  <span
+      {/* Step Indicator — dense console pill row aligned with max-w-3xl content */}
+      <div className="max-w-3xl mx-auto w-full">
+        <div className="panel p-3">
+          <div className="flex items-center justify-between w-full overflow-x-auto gap-2">
+            {STEPS.map((label, i) => {
+              const isDone = i < currentStep;
+              const isActive = i === currentStep;
+              return (
+                <div key={label} className="flex items-center flex-1 last:flex-none">
+                  <button
+                    type="button"
+                    onClick={() => isDone && setCurrentStep(i)}
                     className={cn(
-                      "h-4 w-4 rounded-full flex items-center justify-center text-[10px] font-semibold border",
+                      "flex items-center gap-2 h-7 rounded px-2.5 text-[12px] transition-colors flex-shrink-0",
                       isActive
-                        ? "border-primary-foreground/40 bg-primary-foreground/10"
+                        ? "bg-primary text-primary-foreground font-medium"
                         : isDone
-                        ? "border-success bg-success text-success-foreground"
-                        : "border-border bg-surface"
+                        ? "text-foreground hover:bg-muted cursor-pointer"
+                        : "text-muted-foreground"
                     )}
                   >
-                    {isDone ? <Check className="h-3 w-3" /> : i + 1}
-                  </span>
-                  <span className="whitespace-nowrap">{label}</span>
-                </button>
-                {i < STEPS.length - 1 && (
-                  <div className={cn("h-px w-6 mx-0.5", isDone ? "bg-success" : "bg-border")} />
-                )}
-              </div>
-            );
-          })}
+                    <span
+                      className={cn(
+                        "h-4 w-4 rounded-full flex items-center justify-center text-[10px] font-semibold border shrink-0",
+                        isActive
+                          ? "border-primary-foreground/40 bg-primary-foreground/10"
+                          : isDone
+                          ? "border-success bg-success text-success-foreground"
+                          : "border-border bg-surface"
+                      )}
+                    >
+                      {isDone ? <Check className="h-3 w-3" /> : i + 1}
+                    </span>
+                    <span className="whitespace-nowrap">{label}</span>
+                  </button>
+                  {i < STEPS.length - 1 && (
+                    <div className={cn("h-px flex-1 min-w-[12px] mx-2", isDone ? "bg-success" : "bg-border")} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 

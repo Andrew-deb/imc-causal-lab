@@ -25,16 +25,53 @@ import time
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from tqdm import tqdm
 
 from app.services.job_service import job_manager
 from app.services.event_service import event_manager
 
+import sys
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stderr)
+    formatter = logging.Formatter("%(levelname)s:     [Progress] %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.propagate = False
+
+
+class LoggingProgressBar:
+    """
+    A line-based, non-interactive alternative to tqdm for backend servers.
+    Logs updates cleanly to the Python logger instead of using \r carriage returns.
+    """
+    def __init__(self, total: int, desc: str = "Models", logger_instance=None):
+        self.total = total
+        self.desc = desc
+        self.current = 0
+        self.postfix = ""
+        self.logger = logger_instance or logger
+        self.logger.info(f"--- Starting {self.desc} loop: 0/{self.total} runs ---")
+
+    def update(self, n: int = 1):
+        self.current = min(self.total, self.current + n)
+        percent = (self.current / self.total) * 100 if self.total > 0 else 0
+        postfix_msg = f" | {self.postfix}" if self.postfix else ""
+        self.logger.info(
+            f"Progress: {self.current}/{self.total} tasks completed ({percent:.1f}%)"
+            f"{postfix_msg}"
+        )
+
+    def set_postfix_str(self, s: str):
+        self.postfix = s
+
+    def close(self):
+        self.logger.info(f"--- Finished {self.desc} loop: {self.current}/{self.total} runs completed ---")
 
 
 class StepContext:
-    """Context manager for a single pipeline step. Prints ✅ on exit."""
+    """Context manager for a single pipeline step. Logs step milestones."""
 
     def __init__(
         self,
@@ -51,7 +88,7 @@ class StepContext:
         self._session_id = session_id
         self._detail_text = ""
         self._start_time = None
-        print(f"\n  Step {step_num}/{total}: {description}...", end="", flush=True)
+        logger.info(f"Step {step_num}/{total} - STARTED - {description}")
 
     def detail(self, text: str):
         """Set detail text shown after the checkmark."""
@@ -96,10 +133,10 @@ class StepContext:
         status = "completed" if exc_type is None else "failed"
 
         if exc_type is None:
-            suffix = f"  ({self._detail_text})" if self._detail_text else ""
-            print(f"  ✅{suffix}")
+            suffix = f" ({self._detail_text})" if self._detail_text else ""
+            logger.info(f"Step {self._step_num}/{self._total} - SUCCESS - {self._desc}{suffix} - took {duration_ms:.2f}ms")
         else:
-            print(f"  ❌  ({exc_val})")
+            logger.error(f"Step {self._step_num}/{self._total} - FAILED - {self._desc} - Error: {exc_val} - took {duration_ms:.2f}ms")
 
         if self._job_id:
             try:
@@ -162,9 +199,7 @@ class PipelineTracker:
         # Suppress sklearn FutureWarnings that garble terminal output
         warnings.filterwarnings("ignore", category=FutureWarning)
 
-        print("\n" + "=" * 60)
-        print(f"  {self.name}")
-        print("=" * 60)
+        logger.info(f"==================== STARTING PIPELINE: {self.name} ====================")
 
         if self.job_id:
             try:
@@ -187,8 +222,7 @@ class PipelineTracker:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type is not None:
-            print(f"\n  ❌ Pipeline failed: {exc_val}")
-            print("=" * 60 + "\n")
+            logger.error(f"==================== PIPELINE FAILED: {self.name} - Error: {exc_val} ====================")
 
             if self.job_id:
                 try:
@@ -233,20 +267,13 @@ class PipelineTracker:
             session_id=self.session_id
         )
 
-    def model_loop(self, total: int, colour: str = "green") -> tqdm:
-        """Create a pre-configured tqdm bar for the estimator/model loop."""
-        return tqdm(
-            total=total,
-            desc="     Models",
-            bar_format="     {l_bar}{bar:30}{r_bar}",
-            colour=colour,
-        )
+    def model_loop(self, total: int, colour: str = "green") -> LoggingProgressBar:
+        """Create a pre-configured LoggingProgressBar for the estimator/model loop."""
+        return LoggingProgressBar(total=total, desc="Models", logger_instance=logger)
 
     def complete(self, summary: str):
         """Print the completion banner."""
-        print("\n" + "=" * 60)
-        print(f"  ✅ {summary}")
-        print("=" * 60 + "\n")
+        logger.info(f"==================== PIPELINE COMPLETED: {self.name} - {summary} ====================")
 
         if self.job_id:
             try:

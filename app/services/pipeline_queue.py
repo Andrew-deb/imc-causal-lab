@@ -132,6 +132,11 @@ class PipelineQueue:
                             steps=updated_steps,
                             error="Server restarted during execution."
                         )
+                        if session_id:
+                            try:
+                                session_manager.update_session(session_id, status="failed", error="Server restarted during execution.")
+                            except Exception as se:
+                                logger.error(f"Failed to update session status for interrupted job {job_id[:8]}: {se}")
                         event_manager.log(
                             event_type="pipeline_interrupted",
                             severity="warning",
@@ -220,10 +225,19 @@ class PipelineQueue:
                     duration_seconds=0.0,
                     steps=updated_steps
                 )
+                if job and job.get("session_id"):
+                    session_id = job["session_id"]
+                    from app.services.session_service import session_manager
+                    try:
+                        session = session_manager.get_session(session_id)
+                        if session and session.get("status") not in ("completed", "failed"):
+                            session_manager.update_session(session_id, status="failed", error="Job cancelled while in queue.")
+                    except Exception as se:
+                        logger.error(f"Failed to update session status on job cancellation: {se}")
                 event_manager.log(
                     event_type="job_cancelled",
                     severity="info",
-                    session_id=None,
+                    session_id=job.get("session_id") if job else None,
                     message=f"Job {job_id[:8]} cancelled while in queue",
                     metadata={"job_id": job_id}
                 )
@@ -301,10 +315,19 @@ class PipelineQueue:
                         duration_seconds=duration_seconds,
                         steps=updated_steps
                     )
+                    if job and job.get("session_id"):
+                        session_id = job["session_id"]
+                        from app.services.session_service import session_manager
+                        try:
+                            session = session_manager.get_session(session_id)
+                            if session and session.get("status") not in ("completed", "failed"):
+                                session_manager.update_session(session_id, status="failed", error="Job cancelled or interrupted during execution.")
+                        except Exception as se:
+                            logger.error(f"Failed to update session status on running job cancellation: {se}")
                     event_manager.log(
                         event_type="job_cancelled",
                         severity="info",
-                        session_id=None,
+                        session_id=job.get("session_id") if job else None,
                         message=f"Job {job_id[:8]} cancelled during execution",
                         metadata={"job_id": job_id, "duration_seconds": duration_seconds}
                     )

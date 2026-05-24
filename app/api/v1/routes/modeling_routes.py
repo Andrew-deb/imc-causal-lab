@@ -119,19 +119,30 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
     async def run_modeling():
         from app.services.session_service import session_manager
         await asyncio.to_thread(session_manager.update_session, request.session_id, status="modeling_in_progress")
+        completed = False
         try:
             await execute_pipeline(
                 session_id=request.session_id,
                 col_mapping=col_mapping,
                 job_id=modeling_job_id
             )
+            completed = True
         except Exception as e:
             await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error=str(e))
             raise
+        finally:
+            if not completed:
+                try:
+                    session = await asyncio.to_thread(session_manager.get_session, request.session_id)
+                    if session and session.get("status") not in ("completed", "failed"):
+                        await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error="Execution cancelled or aborted")
+                except Exception as ex:
+                    logger.error(f"Failed to update session status on cleanup: {ex}")
 
     async def run_evaluation_task():
         from app.services.session_service import session_manager
         await asyncio.to_thread(session_manager.update_session, request.session_id, status="evaluation_in_progress")
+        completed = False
         try:
             await execute_evaluation(
                 session_id=request.session_id,
@@ -139,9 +150,18 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
                 job_id=evaluation_job_id
             )
             await asyncio.to_thread(session_manager.update_session, request.session_id, status="completed")
+            completed = True
         except Exception as e:
             await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error=str(e))
             raise
+        finally:
+            if not completed:
+                try:
+                    session = await asyncio.to_thread(session_manager.get_session, request.session_id)
+                    if session and session.get("status") not in ("completed", "failed"):
+                        await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error="Execution cancelled or aborted")
+                except Exception as ex:
+                    logger.error(f"Failed to update session status on cleanup: {ex}")
 
     # 3. Submit both to queue
     pipeline_queue.submit(modeling_job_id, run_modeling)

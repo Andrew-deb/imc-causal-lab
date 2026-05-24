@@ -1,4 +1,4 @@
-import { Home, LayoutDashboard, PlusCircle, History, Workflow, Info, Boxes, PanelLeftClose, PanelLeftOpen, Activity, ScrollText } from "lucide-react";
+import { Home, LayoutDashboard, PlusCircle, History, Workflow, Info, Boxes, PanelLeftClose, PanelLeftOpen, Activity, ScrollText, BookOpen } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,7 @@ const groups = [
       { title: "Home", url: "/", icon: Home, end: true },
       { title: "Pipeline Monitor", url: "/monitor", icon: Activity },
       { title: "Logs & Diagnostics", url: "/logs", icon: ScrollText },
+      { title: "Documentation", url: "/docs", icon: BookOpen, target: "_blank" },
       { title: "About Platform", url: "/about", icon: Info },
     ],
   },
@@ -75,6 +76,7 @@ export function AppSidebar() {
                         <NavLink
                           to={item.url}
                           end={item.end}
+                          target={item.target}
                           className={cn(
                             "group/navlink flex items-center gap-2 rounded-md text-[13px] transition-colors",
                             active

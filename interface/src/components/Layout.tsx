@@ -3,8 +3,16 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { TopBar } from "@/components/TopBar";
 import { SessionContextBar } from "@/components/SessionContextBar";
 import { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 
 export function Layout({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  const isDocs = location.pathname.startsWith("/docs");
+
+  if (isDocs) {
+    return <div className="min-h-screen w-full bg-background">{children}</div>;
+  }
+
   return (
     <SidebarProvider>
       <div className="min-h-screen flex w-full bg-background">

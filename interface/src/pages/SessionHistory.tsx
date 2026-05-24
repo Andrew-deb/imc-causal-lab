@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SessionSummary } from "@/lib/api";
 import { useSession } from "@/contexts/SessionContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -397,6 +397,9 @@ function SessionDetail({ session, onBack, onViewDashboard, onViewComparison }: {
 
 export default function SessionHistory() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const urlSessionId = searchParams.get("session_id");
+
   const { sessionId, setSessionId } = useSession();
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null);
   const queryClient = useQueryClient();
@@ -412,14 +415,25 @@ export default function SessionHistory() {
     },
   });
 
+  useEffect(() => {
+    if (urlSessionId && sessions.length > 0) {
+      const found = sessions.find((s) => s.session_id === urlSessionId);
+      if (found) {
+        setSelectedSession(found);
+      }
+    } else if (!urlSessionId) {
+      setSelectedSession(null);
+    }
+  }, [urlSessionId, sessions]);
+
   const handleViewDashboard = (session: SessionSummary) => {
     setSessionId(session.session_id);
-    navigate("/dashboard");
+    navigate(`/dashboard?session_id=${session.session_id}`);
   };
 
   const handleViewComparison = (session: SessionSummary) => {
     setSessionId(session.session_id);
-    navigate("/dashboard?tab=comparison");
+    navigate(`/dashboard?session_id=${session.session_id}&tab=comparison`);
   };
 
   const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
@@ -440,7 +454,7 @@ export default function SessionHistory() {
     return (
       <SessionDetail
         session={selectedSession}
-        onBack={() => setSelectedSession(null)}
+        onBack={() => { setSelectedSession(null); navigate("/sessions"); }}
         onViewDashboard={() => handleViewDashboard(selectedSession)}
         onViewComparison={() => handleViewComparison(selectedSession)}
       />

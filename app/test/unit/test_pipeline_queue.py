@@ -73,17 +73,21 @@ async def test_queue_capacity_limit(mock_job_manager, mock_event_manager):
 
 @pytest.mark.asyncio
 async def test_cancel_queued_job(mock_job_manager, mock_event_manager):
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_session.return_value = {"session_id": "session_test", "status": "evaluation_in_progress"}
+    
     with patch("app.services.pipeline_queue.job_manager", mock_job_manager), \
-         patch("app.services.pipeline_queue.event_manager", mock_event_manager):
+         patch("app.services.pipeline_queue.event_manager", mock_event_manager), \
+         patch("app.services.session_service.session_manager", mock_session_manager):
         
         queue = PipelineQueue(max_queued=3)
         
         async def dummy_task():
             pass
-
+ 
         queue.submit("job_1", dummy_task)
         queue.submit("job_2", dummy_task)
-
+ 
         # Cancel job_2 while queued (before worker starts)
         assert "job_2" in queue._queued_jobs
         cancelled = queue.cancel("job_2")
@@ -95,20 +99,29 @@ async def test_cancel_queued_job(mock_job_manager, mock_event_manager):
             call[0][0] == "job_2" and call[1].get("status") == "cancelled"
             for call in mock_job_manager.update_job.call_args_list
         )
-
+        mock_session_manager.update_session.assert_called_once_with(
+            "session_test",
+            status="failed",
+            error="Job cancelled while in queue."
+        )
+ 
         await queue.stop()
-
+ 
 @pytest.mark.asyncio
 async def test_cancel_active_job(mock_job_manager, mock_event_manager):
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_session.return_value = {"session_id": "session_test", "status": "evaluation_in_progress"}
+    
     with patch("app.services.pipeline_queue.job_manager", mock_job_manager), \
-         patch("app.services.pipeline_queue.event_manager", mock_event_manager):
+         patch("app.services.pipeline_queue.event_manager", mock_event_manager), \
+         patch("app.services.session_service.session_manager", mock_session_manager):
         
         queue = PipelineQueue(max_queued=3)
         queue.start()
-
+ 
         started_event = asyncio.Event()
         finish_event = asyncio.Event()
-
+ 
         async def long_running_task():
             started_event.set()
             try:
@@ -116,26 +129,31 @@ async def test_cancel_active_job(mock_job_manager, mock_event_manager):
             except asyncio.CancelledError:
                 finish_event.set()
                 raise
-
+ 
         queue.submit("job_active", long_running_task)
-
+ 
         # Wait until task has started running
         await asyncio.wait_for(started_event.wait(), timeout=2.0)
         assert queue._running_job_id == "job_active"
-
+ 
         # Cancel the running job
         cancelled = queue.cancel("job_active")
         assert cancelled is True
-
+ 
         # Wait for cancellation to propagate inside the task
         await asyncio.wait_for(finish_event.wait(), timeout=2.0)
-
+ 
         # Verify database update for job cancellation
         assert any(
             call[0][0] == "job_active" and call[1].get("status") == "cancelled"
             for call in mock_job_manager.update_job.call_args_list
         )
-
+        mock_session_manager.update_session.assert_called_once_with(
+            "session_test",
+            status="failed",
+            error="Job cancelled or interrupted during execution."
+        )
+ 
         await queue.stop()
 
 @pytest.mark.asyncio
@@ -256,6 +274,11 @@ async def test_startup_cleans_up_completed_jobs(mock_job_manager, mock_event_man
             len(call[1].get("steps", [])) == 1 and
             call[1]["steps"][0]["status"] == "interrupted"
             for call in mock_job_manager.update_job.call_args_list
+        )
+        mock_session_manager.update_session.assert_called_once_with(
+            "session_not_completed",
+            status="failed",
+            error="Server restarted during execution."
         )
         
         await queue.stop()
