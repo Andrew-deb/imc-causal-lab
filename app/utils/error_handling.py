@@ -14,7 +14,7 @@ import logging
 import functools
 import traceback
 import asyncio
-from typing import Callable, TypeVar, Any
+from typing import Callable, TypeVar, Any, Optional
 from fastapi import HTTPException
 
 from app.services.session_service import session_manager
@@ -141,7 +141,7 @@ def safe_run(
         return fallback
 
 
-def require_session(session_id: str, include_datasets: bool = False) -> dict:
+def require_session(session_id: str, include_datasets: bool = False, user_id: Optional[str] = None) -> dict:
 
     """
     Validate that a session exists and return it.
@@ -150,7 +150,7 @@ def require_session(session_id: str, include_datasets: bool = False) -> dict:
     Usage (in route handlers):
         session = require_session(session_store, request.session_id)
     """
-    session = session_manager.get_session(session_id, include_datasets=include_datasets)
+    session = session_manager.get_session(session_id, include_datasets=include_datasets, user_id=user_id)
     if not session:
         raise HTTPException(
             status_code=404,

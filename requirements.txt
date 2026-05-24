@@ -17,3 +17,5 @@ httpx
 pymongo[srv]
 pyarrow
 azure-storage-blob
+PyJWT
+cryptography

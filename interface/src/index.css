@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -276,3 +276,17 @@
 .animate-pulse-glowing {
   animation: pulse-glowing 2s infinite ease-in-out;
 }
+
+/* ── Redesign: Font Outfit Utility ───────────────────────────────────── */
+.font-outfit {
+  font-family: 'Outfit', 'Inter', system-ui, sans-serif;
+}
+
+@keyframes cursor-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.85); }
+}
+.animate-cursor-pulse {
+  animation: cursor-pulse 0.4s ease-out;
+}
+

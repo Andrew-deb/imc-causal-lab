@@ -1,11 +1,12 @@
 import asyncio
 import logging
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.imc_mapping import IMCMappingRequest, IMCMappingResponse, IMCConfirmRequest
 from app.services.imc_mapping import map_capmpaign_types_to_imc
 from app.configs import settings, DEFAULT_IMC_MAPPING
 from app.utils.error_handling import handle_route_errors, require_session
+from app.utils.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/imc", tags=["IMC Mapping"])
@@ -13,13 +14,16 @@ router = APIRouter(prefix="/imc", tags=["IMC Mapping"])
 
 @router.post("/map-campaigns", response_model=IMCMappingResponse)
 @handle_route_errors("IMC mapping")
-async def map_campaigns(request: IMCMappingRequest):
+async def map_campaigns(request: IMCMappingRequest, user_id: str = Depends(get_current_user)):
     """
     Map campaign type values to IMC categories.
 
     When USE_DEMO_MAPPING=True (default): uses hardcoded Kotler & Keller mapping.
     When USE_DEMO_MAPPING=False: sends to LLM for classification.
     """
+    if request.session_id == "demo_session":
+        raise HTTPException(status_code=403, detail="Demo session is read-only")
+
     if settings.USE_DEMO_MAPPING:
         # ── Demo mode: deterministic mapping ──────────────────
         logger.info("Using demo IMC mapping (hardcoded)")
@@ -38,12 +42,13 @@ async def map_campaigns(request: IMCMappingRequest):
         result = await map_capmpaign_types_to_imc(request)
 
     # Store mapping in session if session exists
-    session = await asyncio.to_thread(require_session, request.session_id)
+    session = await asyncio.to_thread(require_session, request.session_id, False, user_id)
     if session:
         from app.services.session_service import session_manager
         await asyncio.to_thread(
             session_manager.update_session,
             request.session_id,
+            user_id=user_id,
             imc_mapping=result.mapping,
             status="mapped"
         )
@@ -52,16 +57,20 @@ async def map_campaigns(request: IMCMappingRequest):
 
 @router.post("/confirm-mapping")
 @handle_route_errors("IMC confirm mapping")
-def confirm_mapping(request: IMCConfirmRequest):
+def confirm_mapping(request: IMCConfirmRequest, user_id: str = Depends(get_current_user)):
     """
     Explicitly save the confirmed IMC mapping to the session.
     Used when the user edits the AI mapping or resumes a session.
     """
-    session = require_session(request.session_id)
+    if request.session_id == "demo_session":
+        raise HTTPException(status_code=403, detail="Demo session is read-only")
+
+    session = require_session(request.session_id, False, user_id)
     if session:
         from app.services.session_service import session_manager
         session_manager.update_session(
             request.session_id, 
+            user_id=user_id,
             imc_mapping=request.mapping, 
             status="mapped"
         )

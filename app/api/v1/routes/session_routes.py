@@ -6,33 +6,40 @@ Endpoints:
   GET  /sessions/{session_id} — Get full session detail (metadata + IMC mapping + DAG + results)
 """
 import logging
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends
 
 from app.services.session_service import session_manager
+from app.utils.auth import get_current_user, get_current_user_optional
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
 
 @router.get("")
-def list_sessions():
+def list_sessions(user_id: Optional[str] = Depends(get_current_user_optional)):
     """
     List all sessions with lightweight metadata.
     Returns session_id, status, created_at, dataset_meta, and flags
     for whether results/evaluation exist.
     """
-    return session_manager.list_sessions()
+    if user_id is None:
+        return []
+    return session_manager.list_sessions(user_id=user_id)
 
 
 @router.get("/{session_id}")
-def get_session_detail(session_id: str):
+def get_session_detail(session_id: str, user_id: Optional[str] = Depends(get_current_user_optional)):
     """
     Get detailed session info (excluding raw DataFrames).
 
     Returns metadata, IMC mapping, column mapping, DAG reference,
     and pipeline results if available.
     """
-    session = session_manager.get_session(session_id)
+    if session_id != "demo_session" and user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required to view private sessions")
+
+    session = session_manager.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
@@ -70,12 +77,20 @@ def get_session_detail(session_id: str):
 
     return detail
 
+
 @router.delete("/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, user_id: str = Depends(get_current_user)):
     """
     Delete a session and all its associated data.
     """
-    success = session_manager.delete_session(session_id)
+    if session_id == "demo_session":
+        raise HTTPException(status_code=403, detail="Demo session cannot be deleted")
+
+    try:
+        success = session_manager.delete_session(session_id, user_id=user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     if not success:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     
@@ -83,11 +98,14 @@ def delete_session(session_id: str):
 
 
 @router.get("/{session_id}/treatment-balance")
-def get_treatment_balance(session_id: str):
+def get_treatment_balance(session_id: str, user_id: Optional[str] = Depends(get_current_user_optional)):
     """
     Retrieve treatment balance results for a session.
     """
-    session = session_manager.get_session(session_id)
+    if session_id != "demo_session" and user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    session = session_manager.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
@@ -108,7 +126,7 @@ def get_treatment_balance(session_id: str):
 
 
 @router.patch("/{session_id}/attach-dag")
-def attach_dag_to_session(session_id: str, payload: dict):
+def attach_dag_to_session(session_id: str, payload: dict, user_id: str = Depends(get_current_user)):
     """
     Attach a DAG from the library to a session.
 
@@ -116,16 +134,20 @@ def attach_dag_to_session(session_id: str, payload: dict):
     Updates the session with the DAG reference and transitions status
     to 'discovery_completed'.
     """
+    if session_id == "demo_session":
+        raise HTTPException(status_code=403, detail="Demo session is read-only")
+
     dag_id = payload.get("dag_id")
     if not dag_id:
         raise HTTPException(status_code=400, detail="dag_id is required")
 
-    session = session_manager.get_session(session_id)
+    session = session_manager.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
     session_manager.update_session(
         session_id,
+        user_id=user_id,
         dag_id=dag_id,
         status="discovery_completed",
     )
@@ -135,12 +157,15 @@ def attach_dag_to_session(session_id: str, payload: dict):
 
 
 @router.get("/{session_id}/data-preview")
-def get_data_preview(session_id: str, rows: int = 5):
+def get_data_preview(session_id: str, rows: int = 5, user_id: Optional[str] = Depends(get_current_user_optional)):
     """
     On-demand data preview — returns the first N rows from each stored dataset.
     Fetches from in-memory or Azure Blob depending on the storage backend.
     """
-    session = session_manager.get_session(session_id, include_datasets=True)
+    if session_id != "demo_session" and user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    session = session_manager.get_session(session_id, include_datasets=True, user_id=user_id)
     if not session:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 

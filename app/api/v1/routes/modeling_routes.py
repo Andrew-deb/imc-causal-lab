@@ -1,13 +1,14 @@
 import asyncio
 import uuid
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 from app.schemas.modeling_schema import RunPipelineRequest, PipelineResult, ColumnMapping
 from app.services.modeling_service import execute_pipeline, execute_evaluation, build_column_mapping
 from app.utils.error_handling import handle_route_errors, require_session
 from app.services.job_service import job_manager
 from app.services.pipeline_queue import pipeline_queue
+from app.utils.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/modeling", tags=["Modeling"])
@@ -37,7 +38,7 @@ def _is_real_mapping(mapping: ColumnMapping | None) -> bool:
 
 @router.post("/run-pipeline", response_model=PipelineResult)
 @handle_route_errors("Pipeline execution")
-async def run_pipeline_endpoint(request: RunPipelineRequest):
+async def run_pipeline_endpoint(request: RunPipelineRequest, user_id: str = Depends(get_current_user)):
     """
     Run the full causal inference pipeline.
 
@@ -46,7 +47,10 @@ async def run_pipeline_endpoint(request: RunPipelineRequest):
       - column_mapping (optional) — pass this when testing from Swagger.
         If omitted (or set to null), the mapping is pulled from the session.
     """
-    session = await asyncio.to_thread(require_session, request.session_id)
+    if request.session_id == "demo_session":
+        raise HTTPException(status_code=403, detail="Demo session is read-only")
+
+    session = await asyncio.to_thread(require_session, request.session_id, False, user_id)
 
     # 1. Use inline column_mapping if provided with real values
     if _is_real_mapping(request.column_mapping):
@@ -68,14 +72,18 @@ async def run_pipeline_endpoint(request: RunPipelineRequest):
     )
     return result
 
+
 @router.post("/run-async")
 @handle_route_errors("Pipeline execution (async)")
-async def run_pipeline_async_endpoint(request: RunPipelineRequest):
+async def run_pipeline_async_endpoint(request: RunPipelineRequest, user_id: str = Depends(get_current_user)):
     """
     Run the full causal inference pipeline asynchronously.
     Creates both modeling and evaluation jobs and queues them sequentially.
     Returns the job IDs immediately.
     """
+    if request.session_id == "demo_session":
+        raise HTTPException(status_code=403, detail="Demo session is read-only")
+
     # Check if queue has space for both jobs (causal + evaluation)
     status = pipeline_queue.get_status()
     if status["queued_count"] + 2 > status["max_queued"]:
@@ -84,7 +92,7 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
             detail=f"The job queue is full ({status['queued_count']}/{status['max_queued']} jobs queued). Please wait for active runs to complete."
         )
 
-    session = await asyncio.to_thread(require_session, request.session_id)
+    session = await asyncio.to_thread(require_session, request.session_id, False, user_id)
 
     if _is_real_mapping(request.column_mapping):
         col_mapping = request.column_mapping
@@ -103,7 +111,8 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
         session_id=request.session_id,
         pipeline_type="causal",
         run_id=run_id,
-        config=None
+        config=None,
+        user_id=user_id,
     )
 
     # 2. Create evaluation job
@@ -112,13 +121,14 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
         session_id=request.session_id,
         pipeline_type="evaluation",
         run_id=run_id,
-        config=None
+        config=None,
+        user_id=user_id,
     )
 
     # Define task wrappers
     async def run_modeling():
         from app.services.session_service import session_manager
-        await asyncio.to_thread(session_manager.update_session, request.session_id, status="modeling_in_progress")
+        await asyncio.to_thread(session_manager.update_session, request.session_id, user_id=user_id, status="modeling_in_progress")
         completed = False
         try:
             await execute_pipeline(
@@ -128,20 +138,20 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
             )
             completed = True
         except Exception as e:
-            await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error=str(e))
+            await asyncio.to_thread(session_manager.update_session, request.session_id, user_id=user_id, status="failed", error=str(e))
             raise
         finally:
             if not completed:
                 try:
-                    session = await asyncio.to_thread(session_manager.get_session, request.session_id)
+                    session = await asyncio.to_thread(session_manager.get_session, request.session_id, False, user_id)
                     if session and session.get("status") not in ("completed", "failed"):
-                        await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error="Execution cancelled or aborted")
+                        await asyncio.to_thread(session_manager.update_session, request.session_id, user_id=user_id, status="failed", error="Execution cancelled or aborted")
                 except Exception as ex:
                     logger.error(f"Failed to update session status on cleanup: {ex}")
 
     async def run_evaluation_task():
         from app.services.session_service import session_manager
-        await asyncio.to_thread(session_manager.update_session, request.session_id, status="evaluation_in_progress")
+        await asyncio.to_thread(session_manager.update_session, request.session_id, user_id=user_id, status="evaluation_in_progress")
         completed = False
         try:
             await execute_evaluation(
@@ -149,17 +159,17 @@ async def run_pipeline_async_endpoint(request: RunPipelineRequest):
                 col_mapping=col_mapping,
                 job_id=evaluation_job_id
             )
-            await asyncio.to_thread(session_manager.update_session, request.session_id, status="completed")
+            await asyncio.to_thread(session_manager.update_session, request.session_id, user_id=user_id, status="completed")
             completed = True
         except Exception as e:
-            await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error=str(e))
+            await asyncio.to_thread(session_manager.update_session, request.session_id, user_id=user_id, status="failed", error=str(e))
             raise
         finally:
             if not completed:
                 try:
-                    session = await asyncio.to_thread(session_manager.get_session, request.session_id)
+                    session = await asyncio.to_thread(session_manager.get_session, request.session_id, False, user_id)
                     if session and session.get("status") not in ("completed", "failed"):
-                        await asyncio.to_thread(session_manager.update_session, request.session_id, status="failed", error="Execution cancelled or aborted")
+                        await asyncio.to_thread(session_manager.update_session, request.session_id, user_id=user_id, status="failed", error="Execution cancelled or aborted")
                 except Exception as ex:
                     logger.error(f"Failed to update session status on cleanup: {ex}")
 

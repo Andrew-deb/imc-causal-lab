@@ -596,6 +596,8 @@ export default function Dashboard() {
     );
   }
 
+  const isDemo = searchParams.get("demo") === "true" || sessionId === "demo_session" || searchParams.get("session_id") === "demo_session";
+
   return (
     <div className="space-y-5 animate-fade-in">
       <PageHeader
@@ -627,6 +629,16 @@ export default function Dashboard() {
           </Select>
         }
       />
+
+      {isDemo && (
+        <Alert className="border-cyan-500/20 bg-cyan-500/5 text-cyan-400">
+          <Info className="h-4 w-4 text-cyan-400" />
+          <AlertTitle className="font-semibold text-cyan-300">Read-Only Demo Mode</AlertTitle>
+          <AlertDescription className="text-slate-300 text-xs">
+            You are viewing sample results in read-only Demo Mode. Sign up to upload your own marketing datasets and run custom machine learning pipelines.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {flagged.length > 0 && (
         <Alert variant="destructive">

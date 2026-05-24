@@ -2,6 +2,7 @@ import { Home, LayoutDashboard, PlusCircle, History, Workflow, Info, Boxes, Pane
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { UserButton, useAuth } from "@/lib/auth-wrapper";
 import {
   Sidebar,
   SidebarContent,
@@ -19,7 +20,7 @@ const groups = [
   {
     label: "Workspace",
     items: [
-      { title: "Home", url: "/", icon: Home, end: true },
+      { title: "Home", url: "/home", icon: Home, end: true },
       { title: "Pipeline Monitor", url: "/monitor", icon: Activity },
       { title: "Logs & Diagnostics", url: "/logs", icon: ScrollText },
       { title: "Documentation", url: "/docs", icon: BookOpen, target: "_blank" },
@@ -43,14 +44,15 @@ export function AppSidebar() {
   const location = useLocation();
   const isActive = (path: string, end?: boolean) =>
     end ? location.pathname === path : location.pathname.startsWith(path);
+  const { isSignedIn } = useAuth();
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       <SidebarContent className="bg-sidebar">
         {/* Brand */}
         <div className={cn("h-12 flex items-center border-b border-sidebar-border px-3", collapsed && "justify-center px-0")}>
-          <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center shrink-0">
-            <Boxes className="h-4 w-4 text-primary-foreground" />
+          <div className="h-7 w-7 rounded-md bg-gradient-to-tr from-cyan-500 to-indigo-500 flex items-center justify-center shrink-0">
+            <Boxes className="h-4 w-4 text-white" />
           </div>
           {!collapsed && (
             <span className="ml-2 text-sm font-semibold text-sidebar-foreground tracking-tight">
@@ -72,7 +74,7 @@ export function AppSidebar() {
                   const active = isActive(item.url, item.end);
                   return (
                     <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={active} className="relative h-8">
+                       <SidebarMenuButton asChild isActive={active} className="relative h-8">
                         <NavLink
                           to={item.url}
                           end={item.end}
@@ -102,7 +104,39 @@ export function AppSidebar() {
           </SidebarGroup>
         ))}
       </SidebarContent>
-      <SidebarFooter className="bg-sidebar border-t border-sidebar-border p-2">
+      <SidebarFooter className="bg-sidebar border-t border-sidebar-border p-2 gap-2">
+        {/* User Button / Auth status */}
+        <div className={cn("flex items-center gap-2 p-1 rounded-md hover:bg-sidebar-accent/40", collapsed ? "justify-center" : "px-2")}>
+          {isSignedIn ? (
+            <div className="flex items-center gap-2 overflow-hidden w-full">
+              <UserButton 
+                afterSignOutUrl="/"
+                appearance={{
+                  elements: {
+                    userButtonAvatarBox: "h-6 w-6",
+                    userButtonTrigger: "focus:shadow-none focus:outline-none"
+                  }
+                }}
+              />
+              {!collapsed && (
+                <span className="text-[12px] text-sidebar-foreground/80 truncate font-medium">
+                  Account Details
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 w-full">
+              <NavLink 
+                to="/sign-in" 
+                className="flex items-center gap-2 text-[12px] text-sidebar-foreground/80 hover:text-sidebar-foreground w-full"
+              >
+                <Boxes className="h-4 w-4 shrink-0 text-sidebar-foreground/60" />
+                {!collapsed && <span>Sign In</span>}
+              </NavLink>
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={toggleSidebar}

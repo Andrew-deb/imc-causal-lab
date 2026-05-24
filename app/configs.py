@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     MONGODB_DATABASE: str = "imc_causal_lab"
     USE_MONGO: bool = False         # Toggle: False = in-memory, True = MongoDB 
 
+    # Clerk Authentication Configuration
+    CLERK_SECRET_KEY: Optional[str] = ""
+    VITE_CLERK_PUBLISHABLE_KEY: Optional[str] = ""
+
     # Azure Storage Configurations
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     AZURE_CONTAINER_NAME: str = "imc-sessions"

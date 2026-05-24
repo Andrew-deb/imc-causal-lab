@@ -1,11 +1,12 @@
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 from app.schemas.modeling_schema import ColumnMapping, EvaluationResponse, RunPipelineRequest
 from app.services.modeling_service import execute_evaluation, build_column_mapping
 from app.utils.error_handling import handle_route_errors, require_session, require_imc_mapping
 from app.api.v1.routes.modeling_routes import _is_real_mapping
+from app.utils.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/modeling", tags=["Evaluation"])
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/modeling", tags=["Evaluation"])
 
 @router.post("/evaluate", response_model=EvaluationResponse)
 @handle_route_errors("Evaluation")
-async def evaluate_models_endpoint(request: RunPipelineRequest):
+async def evaluate_models_endpoint(request: RunPipelineRequest, user_id: str = Depends(get_current_user)):
     """
     Evaluate causal models — compute uplift metrics + descriptive statistics.
 
@@ -27,7 +28,10 @@ async def evaluate_models_endpoint(request: RunPipelineRequest):
       - Per-channel descriptive statistics (Treatment vs Control comparison)
       - Flattened performance summary table
     """
-    session = await asyncio.to_thread(require_session, request.session_id)
+    if request.session_id == "demo_session":
+        raise HTTPException(status_code=403, detail="Demo session is read-only")
+
+    session = await asyncio.to_thread(require_session, request.session_id, False, user_id)
     require_imc_mapping(session)
 
     # 1. Use inline column_mapping if provided with real values

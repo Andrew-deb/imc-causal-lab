@@ -34,7 +34,7 @@ class JobManager:
     def __init__(self):
         self._store: dict[str, dict] = {}
 
-    def create_job(self, session_id: str, pipeline_type: str, run_id: Optional[str] = None, config: Optional[dict] = None) -> str:
+    def create_job(self, session_id: str, pipeline_type: str, run_id: Optional[str] = None, config: Optional[dict] = None, user_id: Optional[str] = None) -> str:
         job_id = f"job_{uuid.uuid4()}"
         now = datetime.now(timezone.utc)
 
@@ -54,6 +54,7 @@ class JobManager:
         self._store[job_id] = {
             "job_id": job_id,
             "session_id": session_id,
+            "user_id": user_id,
             "run_id": run_id,
             "pipeline_type": pipeline_type,
             "status": "queued",
@@ -70,8 +71,14 @@ class JobManager:
         logger.info(f"Created in-memory job: {job_id[:8]} ({pipeline_type}) for session {session_id[:8]}")
         return job_id
 
-    def get_job(self, job_id: str) -> Optional[dict]:
-        return self._store.get(job_id)
+    def get_job(self, job_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+        job = self._store.get(job_id)
+        if not job:
+            return None
+        if user_id is not None and job.get("session_id") != "demo_session":
+            if job.get("user_id") != user_id:
+                return None
+        return job
 
     def update_job(self, job_id: str, **fields) -> None:
         job = self._store.get(job_id)
@@ -94,10 +101,13 @@ class JobManager:
                 step.update(step_fields)
                 break
 
-    def list_jobs(self, session_id: Optional[str] = None) -> List[dict]:
+    def list_jobs(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> List[dict]:
         jobs = list(self._store.values())
         if session_id:
             jobs = [j for j in jobs if j["session_id"] == session_id]
+        if user_id is not None:
+            # For jobs, if the session is demo_session, anyone can query it
+            jobs = [j for j in jobs if j.get("session_id") == "demo_session" or j.get("user_id") == user_id]
         
         # Sort by submitted_at descending
         jobs.sort(key=lambda j: j["submitted_at"], reverse=True)
@@ -125,7 +135,7 @@ class MongoJobManager:
         # 30-day TTL index on completed_at
         self._col.create_index("completed_at", expireAfterSeconds=2592000)
 
-    def create_job(self, session_id: str, pipeline_type: str, run_id: Optional[str] = None, config: Optional[dict] = None) -> str:
+    def create_job(self, session_id: str, pipeline_type: str, run_id: Optional[str] = None, config: Optional[dict] = None, user_id: Optional[str] = None) -> str:
         job_id = f"job_{uuid.uuid4()}"
         now = datetime.now(timezone.utc)
 
@@ -145,6 +155,7 @@ class MongoJobManager:
         doc = {
             "job_id": job_id,
             "session_id": session_id,
+            "user_id": user_id,
             "run_id": run_id,
             "pipeline_type": pipeline_type,
             "status": "queued",
@@ -162,8 +173,14 @@ class MongoJobManager:
         logger.info(f"Created MongoDB job: {job_id[:8]} ({pipeline_type}) for session {session_id[:8]} with run {run_id}")
         return job_id
 
-    def get_job(self, job_id: str) -> Optional[dict]:
-        return self._col.find_one({"job_id": job_id}, {"_id": 0})
+    def get_job(self, job_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+        job = self._col.find_one({"job_id": job_id}, {"_id": 0})
+        if not job:
+            return None
+        if user_id is not None and job.get("session_id") != "demo_session":
+            if job.get("user_id") != user_id:
+                return None
+        return job
 
     def update_job(self, job_id: str, **fields):
         fields["updated_at"] = datetime.now(timezone.utc)
@@ -183,10 +200,13 @@ class MongoJobManager:
             {"$set": update_doc}
         )
 
-    def list_jobs(self, session_id: Optional[str] = None) -> List[dict]:
+    def list_jobs(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> List[dict]:
         query = {}
         if session_id:
             query["session_id"] = session_id
+        if user_id is not None:
+            # Include jobs matching user_id or demo_session
+            query["$or"] = [{"user_id": user_id}, {"session_id": "demo_session"}]
 
         cursor = self._col.find(query, {"_id": 0}).sort("submitted_at", -1)
         return list(cursor)

@@ -27,6 +27,7 @@ class SessionManager:
         transactions_df,
         campaigns_df,
         dataset_meta: dict,
+        user_id: Optional[str] = None,
     ) -> str:
         """Create a new session with uploaded datasets. Returns session_id."""
         session_id = f"session_{uuid.uuid4()}"
@@ -34,6 +35,7 @@ class SessionManager:
 
         self._store[session_id] = {
             "session_id": session_id,
+            "user_id": user_id,
             "status": "uploaded",
             "created_at": now,
             "updated_at": now,
@@ -50,31 +52,49 @@ class SessionManager:
         logger.info(f"Session created: {session_id[:8]}")
         return session_id
 
-    def get_session(self, session_id: str, include_datasets: bool = False) -> Optional[dict]:
+    def get_session(self, session_id: str, include_datasets: bool = False, user_id: Optional[str] = None) -> Optional[dict]:
         """Retrieve full session data by ID."""
-        return self._store.get(session_id)
+        session = self._store.get(session_id)
+        if not session:
+            return None
+        if session_id != "demo_session" and user_id is not None:
+            if session.get("user_id") != user_id:
+                return None
+        return session
 
-    def update_session(self, session_id: str, **fields) -> None:
+    def update_session(self, session_id: str, user_id: Optional[str] = None, **fields) -> None:
         """Update specific fields on a session."""
         session = self._store.get(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
+        if session_id == "demo_session" and user_id is not None:
+            raise ValueError("Demo session is read-only")
+        if user_id is not None and session.get("user_id") != user_id:
+            raise ValueError("Unauthorized access to session")
 
         fields["updated_at"] = datetime.now(timezone.utc)
         session.update(fields)
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session. Returns True if it existed."""
-        if session_id in self._store:
-            del self._store[session_id]
-            logger.info(f"Session deleted: {session_id[:8]}")
-            return True
-        return False
+        if session_id == "demo_session":
+            raise ValueError("Demo session cannot be deleted")
+        session = self._store.get(session_id)
+        if not session:
+            return False
+        if user_id is not None and session.get("user_id") != user_id:
+            raise ValueError("Unauthorized access to session")
+        
+        del self._store[session_id]
+        logger.info(f"Session deleted: {session_id[:8]}")
+        return True
 
-    def list_sessions(self) -> list[dict]:
+    def list_sessions(self, user_id: Optional[str] = None) -> list[dict]:
         """List all sessions (lightweight metadata only)."""
         sessions = []
         for sid, data in self._store.items():
+            if user_id is not None and data.get("user_id") != user_id:
+                continue
             sessions.append({
                 "session_id": sid,
                 "status": data.get("status", "unknown"),
@@ -106,7 +126,7 @@ class MongoSessionManager:
         # Create index on session_id for fast lookups
         self._col.create_index("session_id", unique=True)
 
-    def create_session(self, customers_df, transactions_df, campaigns_df, dataset_meta):
+    def create_session(self, customers_df, transactions_df, campaigns_df, dataset_meta, user_id: Optional[str] = None):
         session_id = f"session_{uuid.uuid4()}"
         now = datetime.now(timezone.utc)
 
@@ -125,6 +145,7 @@ class MongoSessionManager:
 
         doc = {
             "session_id": session_id,
+            "user_id": user_id,
             "status": "uploaded",
             "created_at": now,
             "updated_at": now,
@@ -145,10 +166,14 @@ class MongoSessionManager:
         return session_id
 
 
-    def get_session(self, session_id, include_datasets: bool = False):
+    def get_session(self, session_id, include_datasets: bool = False, user_id: Optional[str] = None):
         doc = self._col.find_one({"session_id": session_id}, {"_id": 0})
         if not doc:
             return None
+
+        if session_id != "demo_session" and user_id is not None:
+            if doc.get("user_id") != user_id:
+                return None
 
         # Reconstruct DataFrames by downloading them from Azure only if requested
         datasets = doc.pop("datasets", {})
@@ -162,7 +187,14 @@ class MongoSessionManager:
         return doc
 
 
-    def update_session(self, session_id, **fields):
+    def update_session(self, session_id, user_id: Optional[str] = None, **fields):
+        if session_id == "demo_session" and user_id is not None:
+            raise ValueError("Demo session is read-only")
+        if user_id is not None:
+            existing = self._col.find_one({"session_id": session_id})
+            if not existing or existing.get("user_id") != user_id:
+                raise ValueError("Unauthorized access to session")
+
         fields["updated_at"] = datetime.now(timezone.utc)
 
         # FIX: Loop through ALL fields and convert any Pydantic models to dictionaries
@@ -176,7 +208,14 @@ class MongoSessionManager:
         )
 
 
-    def delete_session(self, session_id):
+    def delete_session(self, session_id, user_id: Optional[str] = None):
+        if session_id == "demo_session":
+            raise ValueError("Demo session cannot be deleted")
+        if user_id is not None:
+            existing = self._col.find_one({"session_id": session_id})
+            if not existing or existing.get("user_id") != user_id:
+                raise ValueError("Unauthorized access to session")
+
         # Clean up Azure blobs first to save space
         doc = self._col.find_one({"session_id": session_id})
         if doc and "datasets" in doc:
@@ -192,9 +231,13 @@ class MongoSessionManager:
         return False
 
 
-    def list_sessions(self):
+    def list_sessions(self, user_id: Optional[str] = None):
+        query = {}
+        if user_id is not None:
+            query["user_id"] = user_id
+
         docs = self._col.find(
-            {},
+            query,
             {  # Only return lightweight fields (exclude datasets, results)
                 "_id": 0,
                 "session_id": 1,

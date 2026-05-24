@@ -15,6 +15,7 @@ async def parse_and_store_datasets(
     transactions_file: UploadFile,
     campaigns_file: UploadFile,
     column_mapping: dict | None = None,
+    user_id: str | None = None,
 ) -> DatasetUploadResponse:
     """Parse uploaded CSV files, store in session manager, return metadata."""
     customers_df = pd.read_csv(BytesIO(await customers_file.read()))
@@ -42,6 +43,7 @@ async def parse_and_store_datasets(
         transactions_df=transactions_df,
         campaigns_df=campaigns_df,
         dataset_meta=dataset_meta,
+        user_id=user_id,
     )
 
     logger.info(

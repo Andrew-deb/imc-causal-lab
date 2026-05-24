@@ -42,11 +42,14 @@ class EventManager:
         self,
         session_id: Optional[str] = None,
         severity: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
+        session_ids: Optional[List[str]] = None
     ) -> List[dict]:
         events = self._store
         if session_id:
             events = [e for e in events if e["session_id"] == session_id]
+        elif session_ids is not None:
+            events = [e for e in events if e["session_id"] in session_ids]
         if severity:
             events = [e for e in events if e["severity"] == severity]
         
@@ -89,11 +92,14 @@ class MongoEventManager:
         self,
         session_id: Optional[str] = None,
         severity: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
+        session_ids: Optional[List[str]] = None
     ) -> List[dict]:
         query = {}
         if session_id:
             query["session_id"] = session_id
+        elif session_ids is not None:
+            query["session_id"] = {"$in": session_ids}
         if severity:
             query["severity"] = severity
 

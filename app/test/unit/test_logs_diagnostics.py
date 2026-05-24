@@ -148,6 +148,9 @@ def test_mongo_event_manager():
 # ─── 3. Event Routing / TestClient Tests ───
 
 def test_logs_endpoint():
+    from app.utils.auth import get_current_user_optional
+    app.dependency_overrides[get_current_user_optional] = lambda: "test_user"
+
     client = TestClient(app)
     
     # We patch the event_manager instance used in the pipeline routes
@@ -164,7 +167,11 @@ def test_logs_endpoint():
         }
     ]
 
-    with patch("app.api.v1.routes.pipeline_routes.event_manager", mock_manager):
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_session.return_value = {"session_id": "sess_api", "user_id": "test_user"}
+
+    with patch("app.api.v1.routes.pipeline_routes.event_manager", mock_manager), \
+         patch("app.api.v1.routes.pipeline_routes.session_manager", mock_session_manager):
         response = client.get("/api/v1/pipeline/logs/events?session_id=sess_api&severity=warning&limit=5")
         
         assert response.status_code == 200
@@ -178,3 +185,4 @@ def test_logs_endpoint():
             severity="warning",
             limit=5
         )
+    app.dependency_overrides.clear()

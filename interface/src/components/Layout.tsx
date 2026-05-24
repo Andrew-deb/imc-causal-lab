@@ -7,9 +7,13 @@ import { useLocation } from "react-router-dom";
 
 export function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const isDocs = location.pathname.startsWith("/docs");
+  const isPublicRoute =
+    location.pathname === "/" ||
+    location.pathname.startsWith("/sign-in") ||
+    location.pathname.startsWith("/sign-up") ||
+    location.pathname.startsWith("/docs");
 
-  if (isDocs) {
+  if (isPublicRoute) {
     return <div className="min-h-screen w-full bg-background">{children}</div>;
   }
 

@@ -9,10 +9,25 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api
 
 // ─── Generic request helper ─────────────────────────────────────────
 
+let getTokenFn: (() => Promise<string | null>) | null = null;
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  
+  if (getTokenFn) {
+    try {
+      const token = await getTokenFn();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch (e) {
+      console.error("Error retrieving Clerk token:", e);
+    }
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
+    headers: { ...headers, ...options?.headers },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -341,14 +356,37 @@ export interface DataPreviewResponse {
 // ─── API Functions ──────────────────────────────────────────────────
 
 export const api = {
+  setGetToken: (fn: () => Promise<string | null>) => {
+    getTokenFn = fn;
+  },
+
   // ── Dataset ──
-  uploadDataset: (formData: FormData) =>
-    fetch(`${API_BASE}/datasets/upload`, { method: "POST", body: formData }).then(
+  uploadDataset: async (formData: FormData) => {
+    const headers: Record<string, string> = {};
+    if (getTokenFn) {
+      try {
+        const token = await getTokenFn();
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+      } catch (e) {
+        console.error("Error retrieving Clerk token for upload:", e);
+      }
+    }
+    return fetch(`${API_BASE}/datasets/upload`, { 
+      method: "POST", 
+      body: formData,
+      headers: headers
+    }).then(
       async (r) => {
-        if (!r.ok) throw new Error("Upload failed");
+        if (!r.ok) {
+          const text = await r.text().catch(() => "");
+          throw new Error(`Upload failed: ${r.statusText} — ${text}`);
+        }
         return r.json() as Promise<UploadResponse>;
       }
-    ),
+    );
+  },
 
   getColumns: (sessionId: string) =>
     request<{ session_id: string; customers_columns: string[]; transactions_columns: string[]; campaigns_columns: string[] }>(
