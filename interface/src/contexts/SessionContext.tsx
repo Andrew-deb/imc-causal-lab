@@ -17,8 +17,16 @@ interface SessionContextType extends SessionState {
   reset: () => void;
 }
 
+const getStoredSessionId = (): string | null => {
+  try {
+    return sessionStorage.getItem("sessionId") || null;
+  } catch {
+    return null;
+  }
+};
+
 const initial: SessionState = {
-  sessionId: null,
+  sessionId: getStoredSessionId(),
   campaignTypes: [],
   columns: [],
   imcMapping: {},
@@ -32,12 +40,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const value: SessionContextType = {
     ...state,
-    setSessionId: (id) => setState((s) => ({ ...s, sessionId: id })),
+    setSessionId: (id) => {
+      setState((s) => ({ ...s, sessionId: id }));
+      try {
+        sessionStorage.setItem("sessionId", id);
+      } catch (e) {
+        console.warn("Failed to save sessionId in sessionStorage", e);
+      }
+    },
     setCampaignTypes: (types) => setState((s) => ({ ...s, campaignTypes: types })),
     setColumns: (cols) => setState((s) => ({ ...s, columns: cols })),
     setImcMapping: (mapping) => setState((s) => ({ ...s, imcMapping: mapping })),
     setSelectedDagId: (id) => setState((s) => ({ ...s, selectedDagId: id })),
-    reset: () => setState(initial),
+    reset: () => {
+      setState({
+        sessionId: null,
+        campaignTypes: [],
+        columns: [],
+        imcMapping: {},
+        selectedDagId: null,
+      });
+      try {
+        sessionStorage.removeItem("sessionId");
+      } catch (e) {}
+    },
   };
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth-wrapper";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { SessionProvider } from "@/contexts/SessionContext";
+import { SessionProvider, useSession } from "@/contexts/SessionContext";
 import { PipelineProvider } from "@/contexts/PipelineContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { Layout } from "@/components/Layout";
@@ -31,7 +31,21 @@ const queryClient = new QueryClient();
 const ProtectedRoute = () => {
   const { isLoaded, isSignedIn } = useAuth();
   const [searchParams] = useSearchParams();
-  const isDemo = searchParams.get("demo") === "true" || searchParams.get("session_id") === "demo_session";
+  const { sessionId } = useSession();
+  
+  const urlDemo = searchParams.get("demo");
+  const urlSessionId = searchParams.get("session_id");
+  
+  if (urlDemo === "true" || urlSessionId === "demo_session") {
+    try {
+      sessionStorage.setItem("guest_demo", "true");
+    } catch (e) {}
+  }
+
+  const isDemo = urlDemo === "true" || 
+                 urlSessionId === "demo_session" || 
+                 sessionId === "demo_session" ||
+                 (typeof window !== "undefined" && window.sessionStorage?.getItem("guest_demo") === "true");
 
   if (!isLoaded) {
     return (

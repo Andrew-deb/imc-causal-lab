@@ -20,8 +20,13 @@ router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
 @router.get("/jobs", response_model=List[PipelineJobSchema])
 def get_all_jobs(session_id: Optional[str] = None, user_id: Optional[str] = Depends(get_current_user_optional)):
     """Retrieve all pipeline jobs, optionally filtered by session_id."""
-    if session_id != "demo_session" and user_id is None:
-        return []
+    if user_id is None:
+        # Guest user can only view demo session jobs
+        if session_id and session_id != "demo_session":
+            return []
+        return job_manager.list_jobs(session_id="demo_session", user_id=None)
+    
+    # Authenticated user
     return job_manager.list_jobs(session_id=session_id, user_id=user_id)
 
 
@@ -164,7 +169,8 @@ def get_system_events(
     else:
         # Find all session IDs for the user
         user_sessions = session_manager.list_sessions(user_id=user_id)
-        session_ids = [s["session_id"] for s in user_sessions]
-        # Include demo session
-        session_ids.append("demo_session")
+        session_ids = list(set(s["session_id"] for s in user_sessions) | {"demo_session"})
         return event_manager.list_events(severity=severity, limit=limit, session_ids=session_ids)
+
+
+

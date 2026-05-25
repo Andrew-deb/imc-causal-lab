@@ -77,12 +77,10 @@ class SessionManager:
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session. Returns True if it existed."""
-        if session_id == "demo_session":
-            raise ValueError("Demo session cannot be deleted")
         session = self._store.get(session_id)
         if not session:
             return False
-        if user_id is not None and session.get("user_id") != user_id:
+        if session_id != "demo_session" and user_id is not None and session.get("user_id") != user_id:
             raise ValueError("Unauthorized access to session")
         
         del self._store[session_id]
@@ -209,9 +207,7 @@ class MongoSessionManager:
 
 
     def delete_session(self, session_id, user_id: Optional[str] = None):
-        if session_id == "demo_session":
-            raise ValueError("Demo session cannot be deleted")
-        if user_id is not None:
+        if user_id is not None and session_id != "demo_session":
             existing = self._col.find_one({"session_id": session_id})
             if not existing or existing.get("user_id") != user_id:
                 raise ValueError("Unauthorized access to session")
@@ -245,7 +241,8 @@ class MongoSessionManager:
                 "created_at": 1,
                 "updated_at": 1,
                 "dataset_meta": 1,
-                "result": {"$ifNull": [True, False]},  # just check existence
+                "result.session_id": 1,
+                "evaluation_result.session_id": 1,
             },
         ).sort("created_at", -1)
 

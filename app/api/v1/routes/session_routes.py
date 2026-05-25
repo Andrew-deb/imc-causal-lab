@@ -23,9 +23,35 @@ def list_sessions(user_id: Optional[str] = Depends(get_current_user_optional)):
     Returns session_id, status, created_at, dataset_meta, and flags
     for whether results/evaluation exist.
     """
+    # Seeded demo session metadata (which is public)
+    demo_sessions = []
+    try:
+        demo = session_manager.get_session("demo_session")
+        if demo:
+            demo_sessions.append({
+                "session_id": demo.get("session_id"),
+                "status": demo.get("status", "unknown"),
+                "created_at": demo.get("created_at"),
+                "updated_at": demo.get("updated_at"),
+                "dataset_meta": demo.get("dataset_meta"),
+                "has_results": demo.get("result") is not None,
+                "has_evaluation": demo.get("evaluation_result") is not None,
+            })
+    except Exception as e:
+        logger.warning(f"Failed to fetch demo_session: {e}")
+
     if user_id is None:
-        return []
-    return session_manager.list_sessions(user_id=user_id)
+        return demo_sessions
+
+    # Get user sessions
+    user_sessions = session_manager.list_sessions(user_id=user_id)
+    
+    # Ensure demo_session is included in the list, but avoid duplicates
+    has_demo = any(s["session_id"] == "demo_session" for s in user_sessions)
+    if not has_demo and demo_sessions:
+        user_sessions.extend(demo_sessions)
+        
+    return user_sessions
 
 
 @router.get("/{session_id}")
@@ -83,9 +109,6 @@ def delete_session(session_id: str, user_id: str = Depends(get_current_user)):
     """
     Delete a session and all its associated data.
     """
-    if session_id == "demo_session":
-        raise HTTPException(status_code=403, detail="Demo session cannot be deleted")
-
     try:
         success = session_manager.delete_session(session_id, user_id=user_id)
     except ValueError as e:

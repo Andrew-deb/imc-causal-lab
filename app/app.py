@@ -139,8 +139,3 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
-
-
-@app.get("/")
-def health_check():
-    return {"status": "running", "app": "IMC Causal Lab"}

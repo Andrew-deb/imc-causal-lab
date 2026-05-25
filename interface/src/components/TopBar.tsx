@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Moon, Sun, Search, BookOpen } from "lucide-react";
 import { CommandPalette } from "@/components/CommandPalette";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { useAuth, UserButton } from "@/lib/auth-wrapper";
 
 export function TopBar() {
   const { theme, toggleTheme } = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const { isSignedIn } = useAuth();
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -60,9 +62,15 @@ export function TopBar() {
         >
           {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
         </Button>
-        <Avatar className="h-7 w-7 ml-1">
-          <AvatarFallback className="bg-muted text-muted-foreground text-[11px]">U</AvatarFallback>
-        </Avatar>
+        {isSignedIn ? (
+          <div className="ml-1 flex items-center justify-center h-7 w-7">
+            <UserButton afterSignOutUrl="/" />
+          </div>
+        ) : (
+          <Avatar className="h-7 w-7 ml-1">
+            <AvatarFallback className="bg-muted text-muted-foreground text-[11px]">U</AvatarFallback>
+          </Avatar>
+        )}
       </div>
     </header>
   );
