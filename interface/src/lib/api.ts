@@ -5,7 +5,7 @@
  * Route prefixes:  /datasets, /imc, /causal-discovery, /modeling, /dashboard
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://imc-causal-lab.vercel.app/api/v1";
 
 // ─── Generic request helper ─────────────────────────────────────────
 
@@ -13,7 +13,7 @@ let getTokenFn: (() => Promise<string | null>) | null = null;
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  
+
   if (getTokenFn) {
     try {
       const token = await getTokenFn();
@@ -373,8 +373,8 @@ export const api = {
         console.error("Error retrieving Clerk token for upload:", e);
       }
     }
-    return fetch(`${API_BASE}/datasets/upload`, { 
-      method: "POST", 
+    return fetch(`${API_BASE}/datasets/upload`, {
+      method: "POST",
       body: formData,
       headers: headers
     }).then(
