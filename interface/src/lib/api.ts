@@ -5,7 +5,7 @@
  * Route prefixes:  /datasets, /imc, /causal-discovery, /modeling, /dashboard
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://imc-causal-lab.vercel.app/api/v1";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://imc-causal-lab.onrender.com/api/v1";
 
 // ─── Generic request helper ─────────────────────────────────────────
 

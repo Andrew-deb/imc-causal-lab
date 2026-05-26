@@ -71,7 +71,7 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     streamingJobIdRef.current = jobId;
-    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+    const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://imc-causal-lab.onrender.com/api/v1";
     const sseUrl = `${API_BASE}/pipeline/stream/${jobId}`;
     console.log(`Connecting to SSE: ${sseUrl}`);
     
